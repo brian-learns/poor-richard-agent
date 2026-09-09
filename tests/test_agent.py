@@ -8,6 +8,7 @@ import re
 import sys
 from typing import get_type_hints
 
+import poor_richard
 from nooa.unifiedllm import FakeLLMClient
 
 from poor_richard_agent import PoorRichardAgent, main
@@ -24,6 +25,28 @@ def test_almanack_skill_is_activated():
     agent = PoorRichardAgent()
     assert isinstance(agent.almanack, PoorRichardSkill)
     assert "poor-richard.almanack" in agent.skills.activated()
+
+
+def test_library_catalog_lists_all_cards():
+    agent = PoorRichardAgent()
+    catalog = agent.library_catalog()
+    lines = catalog.splitlines()
+    # one line per card, each headed by its card_id (with "(import X)" when it differs)
+    assert len(lines) == len(poor_richard.CARDS)
+    ids = [line.split(" [")[0].split(" (import")[0] for line in lines]
+    assert sorted(ids) == sorted(c.id for c in poor_richard.CARDS)
+    # import name is shown only when it differs from the card_id
+    assert "pysweph (import swisseph)" in catalog
+    assert "pycountry (import" not in catalog
+
+
+def test_system_prompt_contains_full_catalog():
+    # the model must see every installed library, not just top search hits
+    agent = PoorRichardAgent()
+    prompt = agent._resolve_system_prompt()
+    assert "{self.library_catalog()}" not in prompt  # placeholder resolved
+    assert "skyfield [compute, temporal]: NASA JPL DE ephemerides" in prompt
+    assert "pysweph (import swisseph) [compute]" in prompt
 
 
 def test_today_state_field():

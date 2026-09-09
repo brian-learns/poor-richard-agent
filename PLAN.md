@@ -14,8 +14,8 @@ The plan follows the NOOA design principles and the reference NOOA agents (`ccng
 
 Its value proposition, distilled:
 
-1. **Discovery** — given a factual question with *no library hint*, the agent finds the right library via the almanack's `search()` API (or the skill's `search` tool).
-2. **Conventional, verified calls** — the agent retrieves the card's golden question and verified expected answer, and calls the library's pinned API shape (recorded in the card's `example`/`notes` for API-drift guardrails).
+1. **Discovery** — given a factual question with *no library hint*, the agent finds the right library. The full 43-library catalog (id, import name, archetypes, provenance) is embedded in the system prompt, so the model picks by provenance; the almanack's `search()` API (via the skill's `search` tool) is a ranking helper, not the only path.
+2. **Conventional, verified or computed calls** — the agent uses the card's golden question + verified expected answer when one matches; otherwise it calls the library's pinned API shape (recorded in the card's `example`/`notes` for API-drift guardrails) to compute the answer.
 3. **Validated, structured output** — the agentic method returns a pydantic `ResearchReport` that the NOOA harness type-validates; the CLI prints it as clean, scriptable JSON.
 4. **Offline-first & sandbox-safe** — the almanack is fully offline; the agent never fetches at runtime (one-time data fetch is handled by the almanack's `scripts/`, documented and skippable in tests).
 5. **NOOA-native** — a single Python class extending `nooa.Agent`, deterministic tools as a `Skill` registered under the `nooa.skills` entry point, docstrings-as-prompt-material, async execution with timeout-bounded, cleaned-up resource handling.
@@ -147,7 +147,7 @@ poor-richard-agent/
 ### 4.3 Agent class — `PoorRichardAgent(Agent, llm=nooa_llm)` (`src/poor_richard_agent/agent.py`)
 
 - **`nooa_llm`** (module-level, `agent.py`) — the plan references it throughout but it must be defined: build via `nooa.unifiedllm.registry.get_llm_client(f"openai/{LLM_MODEL}", api_base=LLM_BASE, api_key="local", max_tokens=8192)`, with `LLM_MODEL`/`LLM_BASE` from env (`NOOA_MODEL`/`NOOA_LLM_BASE`, defaulting to the local llama-server). Mirrors `ccnget-agent` (`__init__.py:40-50`). Construction is offline-safe (no connection until a turn actually runs), so it is safe to build in tests.
-- **Class docstring** = system prompt: describes the agent's role as the Poor Richard almanack agent, the workflow (discover via `self.almanack.search` → verify via `self.almanack.get` → return validated report), the offline guarantee, and the tool surface.
+- **Class docstring** = system prompt: describes the agent's role as the Poor Richard almanack agent, the workflow (pick a library from the catalog → fetch via `self.almanack.get` → verify or compute → return validated report), the offline guarantee, and the tool surface. It also **embeds the full 43-library catalog** via a `{self.library_catalog()}` placeholder (rendered from `poor_richard.CARDS`) so the model sees every installed library — not just the top `search()` hits — and what each references (`provenance`).
 - **`__init__`** (`llm=nooa_llm`, `*`-only):
   - Sets `self.today` (state field, formatted weekday/date/time+offset — mirrors `xng-agent`).
   - `self.skills = SkillRegistry(self)`.
@@ -160,7 +160,8 @@ poor-richard-agent/
       """..."""
       ...
   ```
-  - Docstring describes the workflow: resolve relative dates using `self.today`; call `await self.almanack.search(topic)` to discover cards; for each hit, `await self.almanack.get(card_id)` to obtain the card and its verified questions; match the question to the topic; return a validated `ResearchReport`.
+  - Docstring describes the workflow: resolve relative dates using `self.today`; pick the library(ies) in the system-prompt catalog whose `provenance` fits (`await self.almanack.search(topic)` is only a ranking helper, not the full set); `await self.almanack.get(card_id)` to obtain the card; if a golden question matches, use its verified `expected`, otherwise `import` the library in a cell and compute the answer; return a validated `ResearchReport`.
+  - **`library_catalog()`** — renders the full almanack catalog (one line per card: `card_id (import <import_name>)? [archetypes]: provenance`) from `poor_richard.CARDS`; injected into the system prompt via the `{self.library_catalog()}` placeholder so the model's discovery is not limited to top search hits.
   - Return annotation `ResearchReport` is the validated contract.
   - The `...` body is intentional (NOOA runs it via the LLM); annotate the method `# ty: ignore[empty-body]` so `ty` (`all = "error"`) passes — mirrors `ccnget-agent` (`__init__.py:101-103`).
 - **Tool access:** the model calls `await self.almanack.search(...)` / `await self.almanack.get(...)` in code execution (NOOA renders the skill as a Python object on `self`).
@@ -181,18 +182,18 @@ Mirrors `xng-agent`'s pydantic validated-return pattern. **Flat fields only** �
 - `SearchHit`: `score: float`, `card_id: str`, `pypi: str`, `import_name: str`, `question: str | None = None`, `expected: str | None = None` (the matched golden question, flattened to strings).
 - `CardQuestion`: `question: str`, `expected: str`, `status: str = "candidate"`.
 - `CardDetail`: `card_id: str`, `name: str`, `pypi: str`, `import_name: str`, `questions: list[CardQuestion]`, `notes: str = ""`, `example: str = ""`, `offline: bool = True` — the flat, documented return of `get()` (see §4.4 revision).
-- `Answer`: `card_id`, `import_name`, `pypi`, `question: str`, `expected: str` (verified), `notes: str = ""` (gotchas/API-drift guardrails).
+- `Answer`: `card_id`, `import_name`, `pypi`, `question: str` (the matching golden question, or the topic phrased as the question asked), `expected: str` (the verified golden answer, or the value computed by calling the library), `notes: str = ""` (gotchas/API-drift guardrails).
 - `ResearchReport`: `topic: str`, `discovered: list[SearchHit]`, `answers: list[Answer]`, `offline: bool`, `note: str | None = None`.
 
 ### 4.6 Research workflow
 
 1. **Resolve context** — the model resolves relative dates in the topic against `self.today` if needed (e.g. "next NYSE session").
-2. **Discover** — `await self.almanack.search(topic)` → `list[SearchHit]` (top 3 by almanack score).
-3. **Verify** — for each hit, `await self.almanack.get(card_id)` → `ReferenceCard`; match the card's `Question` to the topic; build `Answer` from the card + question.
-4. **Report** — assemble `ResearchReport` (discovered, answers, offline status, note with recommended API shape).
+2. **Discover** — pick the library(ies) in the system-prompt **catalog** whose `provenance` fits the topic. `await self.almanack.search(topic)` → `list[SearchHit]` (top 3 by almanack score) is a ranking helper only; it is *not* the full set, so a library absent from the hits may still be the right one (e.g. `skyfield` for rise/set times).
+3. **Verify or compute** — `await self.almanack.get(card_id)` → `CardDetail`. If a golden question matches the topic, use its verified `expected`. Otherwise read `notes`/`example` for the pinned API shape, `import <import_name>` in a cell, and compute the answer.
+4. **Report** — assemble `ResearchReport` (discovered search hits, answers each with the question asked + expected + notes, offline status, note with the import + API shape used).
 5. **Validate** — harness validates the pydantic `ResearchReport` against the annotation.
 
-The agent's added value over raw library calls: **discovery** (which library), **verified answers** (question/expected pairs from the almanack's golden tests), and **API-drift guardrails** (card `notes`/`example` record the pinned API shape — the exact failure mode of a model writing from stale training knowledge, per `future-directions.md` §3).
+The agent's added value over raw library calls: **discovery** (which library — the full catalog is in-context, so it is not limited to a fuzzy search's top 3), **verified answers** (question/expected pairs from the almanack's golden tests) or **computed answers** (calling the pinned library when no golden question matches), and **API-drift guardrails** (card `notes`/`example` record the pinned API shape — the exact failure mode of a model writing from stale training knowledge, per `future-directions.md` §3).
 
 ### 4.7 `main()` entry point & output (`poor_richard_agent:main`)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+import poor_richard
 from nooa import Agent, strategy
 from nooa.skill_registry import SkillRegistry
 from nooa.strategies import CodeActStrategy
@@ -37,29 +38,35 @@ nooa_llm = get_llm_client(
 
 class PoorRichardAgent(Agent, llm=nooa_llm):
     """You are Poor Richard, an offline almanack agent. You answer factual
-    questions using a curated set of 43 offline Python reference libraries
-    (ISO codes, constants, unit conversions, calendars, market holidays,
-    ephemerides, checksum validation, ...). You have NO network: every answer
-    comes from the almanack's verified data, never from memory or the web.
+    questions by discovering and calling one of the installed offline Python
+    reference libraries. You have NO network: every answer comes from computing
+    with these libraries (or reading their verified golden answers) — never from
+    memory or the web.
+
+    Installed libraries — `card_id [archetypes]: what it references`. Every one
+    is importable in a cell: `import <import_name>` (the import name is shown
+    only when it differs from card_id). This catalog is the source of truth for
+    what is available — a library that is not a top search hit may still be the
+    right one, so never assume a capability is unavailable from search alone.
+    {self.library_catalog()}
 
     Workflow for research(topic):
-    1. If the topic uses relative dates ("next NYSE session", "today"),
-       resolve them against self.today before searching.
-    2. Discover: await self.almanack.search(topic) ranks the right libraries
-       (up to 3 SearchHit, each carrying the card's best-matched golden
-       question and its verified answer).
-    3. Verify: for the best hit, await self.almanack.get(card_id) returns a
-       CardDetail with these exact fields (use these names, do not guess):
-       card_id, name, pypi, import_name, questions (a list; each item has
-       question, expected, status), notes, example, offline. Pick the entry in
-       card.questions whose question matches the topic and use its expected as
-       the verified answer; read card.notes and card.example for the pinned API
-       shape. If unsure of any field, pprint(card) first.
-    4. Return a ResearchReport: discovered (the hits), answers (verified
-       Answer objects), offline=True, and a note with the recommended import
-       and API shape. If nothing matches, return empty answers and explain in
-       note. Never invent an answer: only report the almanack's verified
-       expected values."""
+    1. If the topic uses relative dates ("next NYSE session", "today"), resolve
+       them against self.today first.
+    2. Discover: pick the library(ies) in the catalog whose provenance fits the
+       topic. await self.almanack.search(topic) (up to 3 SearchHit) is a ranking
+       helper only — it is not the full set.
+    3. Verify or compute: for the chosen card, await self.almanack.get(card_id)
+       returns a CardDetail (fields: card_id, name, pypi, import_name, questions
+       [each question/expected/status], notes, example, offline). If a golden
+       question matches the topic, use its verified expected. Otherwise read
+       notes and example for the pinned API shape, `import <import_name>` in a
+       cell, and compute the answer. pprint(card) before guessing any field.
+    4. Return a ResearchReport: discovered (the search hits), answers (Answer
+       objects: the question asked, the verified-or-computed expected, notes),
+       offline=True, and a note giving the import + API shape used. If no
+       library can answer, return empty answers and explain in note. Never
+       invent an answer."""
 
     today: str
 
@@ -76,20 +83,39 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
         self.almanack: PoorRichardSkill
         self.skills.activate(["poor-richard.almanack"])
 
+    def library_catalog(self) -> str:
+        """Render the full almanack catalog: every installed library as one line
+        ``card_id (import <import_name>)? [archetypes]: provenance``.
+
+        Injected into the system prompt via the ``{self.library_catalog()}``
+        placeholder so the model sees the complete set of available libraries
+        (and what each references), not just the top ``search()`` hits. The
+        import name is shown only when it differs from ``card_id``.
+        """
+        lines = []
+        for card in poor_richard.CARDS:
+            archetypes = ", ".join(a.value for a in card.archetypes) or "-"
+            head = card.id
+            if card.import_name != card.id:
+                head = f"{card.id} (import {card.import_name})"
+            lines.append(f"{head} [{archetypes}]: {card.provenance}")
+        return "\n".join(lines)
+
     # --- Agentic method: ellipsis body, run by the LLM (CodeAct loop) ---
 
     @strategy(CodeActStrategy())
     async def research(self, topic: str) -> ResearchReport:  # ty: ignore[empty-body]
-        """Answer {topic} from the Poor Richard almanack, fully offline.
-        Discover the right library with await self.almanack.search(topic) (each
-        hit has card_id, pypi, import_name, question, expected), then fetch the
-        full card with await self.almanack.get(card_id) (a CardDetail with
-        card_id, import_name, pypi, questions, notes, example) and pick the
-        card.questions entry that matches. Use its expected as the verified
-        answer. Resolve any relative date in the topic against self.today.
-        Return a ResearchReport with the discovered hits, the verified answer(s)
-        (question + expected + notes), offline=True, and a note giving the
-        recommended import and API shape. If nothing matches, return no answers
-        and explain why in note. Never guess attribute names — pprint() an
-        object you are unsure about."""
+        """Answer {topic} from the Poor Richard almanack, fully offline. Your
+        system prompt lists the full catalog of installed libraries — pick the
+        one(s) whose provenance fits the topic (await self.almanack.search(topic)
+        is only a ranking helper; never assume a library is unavailable because
+        it is not a top hit). Fetch the card with await self.almanack.get(card_id)
+        (a CardDetail: card_id, import_name, pypi, questions, notes, example).
+        If a golden question matches the topic, use its verified expected;
+        otherwise read notes/example, `import <import_name>` in a cell, and
+        compute the answer. Resolve any relative date against self.today. Return
+        a ResearchReport: the search hits, the answer(s) (question asked +
+        expected + notes), offline=True, and a note with the import + API shape
+        used. If no library can answer, return no answers and explain in note.
+        Never guess attribute names — pprint() an object you are unsure about."""
         ...

@@ -12,15 +12,23 @@ model-facing surface:
 
 - `await self.almanack.search(query, top=3)` — deterministic; ranks the almanack's
   libraries against the question (up to 3 `SearchHit`, each carrying the card's
-  best-matched golden question and its verified answer).
-- `await self.almanack.get(card_id)` — deterministic; returns the full
-  `ReferenceCard` (all golden questions with verified answers, the pinned
-  `example`, and the `notes` that guard against API drift).
-- `research(topic)` — agentic (CodeAct, `...` body): the model discovers the right
-  library, verifies against the card's golden question, and returns a validated
-  `ResearchReport` (discovered hits, verified answers, offline flag, note).
+  best-matched golden question and its verified answer). A ranking helper — not the
+  full set of available libraries.
+- `await self.almanack.get(card_id)` — deterministic; returns a flat `CardDetail`
+  (all golden questions with verified answers, the pinned `example`, and the
+  `notes` that guard against API drift).
+- `research(topic)` — agentic (CodeAct, `...` body): the model picks the right
+  library from the full catalog in its system prompt, fetches the card, and either
+  reads the matching golden question's verified answer or calls the library to
+  compute one, then returns a validated `ResearchReport` (discovered hits,
+  answers, offline flag, note).
 - `today` — state field (weekday, date, local time + UTC offset) visible to the model
   so it can resolve relative dates like "next NYSE session".
+
+The agent's system prompt embeds the **full catalog of all 43 libraries** (id,
+import name, archetypes, provenance) via `library_catalog()`, so the model can see
+every installed library — not just the top search hits — and pick by what each
+references.
 
 The two tools are plain Python in `PoorRichardSkill`
 (`src/poor_richard_agent/skills.py`), registered under the `nooa.skills`
@@ -60,13 +68,15 @@ found), 1 no match / research error, 2 usage error.
 - **Offline-first**: the agent makes no network calls at runtime; it only reads the
   almanack's bundled, offline-verified data. A pass in the offline test suite
   therefore means correct *and* offline.
-- **Verified answers**: each answer is the almanack card's golden `expected` value,
-  not something the model recalls. The card's `notes`/`example` pin the API shape at
-  the installed version — the agent is told to prefer those over its own memory of the
+- **Verified or computed answers**: each answer is either the almanack card's golden
+  `expected` value or a value computed by calling the installed library — never
+  something the model recalls. The card's `notes`/`example` pin the API shape at the
+  installed version — the agent is told to prefer those over its own memory of the
   library.
-- **Discovery, not guessing**: `search()` ranks by token coverage + name similarity
-  over the 43 cards, so the agent finds the right library even when the question
-  does not name it.
+- **Discovery, not guessing**: the full 43-library catalog (id, import name,
+  archetypes, provenance) is in the system prompt, so the model sees every installed
+  library and picks by what each references; `search()` (token coverage + name
+  similarity) is a ranking helper, not the only path.
 - The validated return is a flat pydantic `ResearchReport` (`models.py`); it never
   embeds the almanack's internal dataclasses.
 - Thinking is disabled for the NOOA loop via `chat_template_kwargs` (litellm

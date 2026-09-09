@@ -60,13 +60,16 @@ class CardDetail(BaseModel):
 
 
 class Answer(BaseModel):
-    """A verified answer assembled from an almanack card and one of its golden questions."""
+    """An answer resolved from an almanack card: either a verified golden
+    question/expected pair, or a value computed by calling the library."""
 
     card_id: str = Field(description="Stable card slug the answer came from.")
     import_name: str = Field(description="Top-level Python module to import.")
     pypi: str = Field(description="PyPI distribution name of the underlying library.")
-    question: str = Field(description="The golden question this answer resolves.")
-    expected: str = Field(description="The verified expected answer (source of truth).")
+    question: str = Field(
+        description="The question this answer resolves: a matching golden question, or the topic phrased as the question asked of the library."
+    )
+    expected: str = Field(description="The verified expected answer, or the value computed by calling the library.")
     notes: str = Field(
         default="",
         description="Card gotchas / pinned API-shape guardrails to call the library correctly.",
