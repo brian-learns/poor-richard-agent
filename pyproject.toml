@@ -1,0 +1,71 @@
+[project]
+name = "poor-richard-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "brian-learns", email = "epitome-tampers.1v@icloud.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "poor-richard>=0.1.0",
+    "nooa>=0.0.9",
+    "pydantic>=2",
+]
+
+[project.scripts]
+poor-richard-agent = "poor_richard_agent:main"
+
+[project.entry-points."nooa.skills"]
+# NOOA skill registry name -> import target. Agents opt in with
+# SkillRegistry(self).activate(["poor-richard.almanack"]) to get self.almanack.
+"poor-richard.almanack" = "poor_richard_agent.skills:PoorRichardSkill"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "pytest>=9.1.1",
+    "refurb>=2.3.1",
+    "ruff>=0.16.5",
+    "ty>=0.0.77",
+    "vulture>=2.16",
+]
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # Pycodestyle errors
+    "F",   # Pyflakes (catches undefined names / unused variables)
+    "B",   # Bugbear (catches common design anti-patterns)
+    "S",   # Bandit Automated Security checks
+    "I",   # Isort (enforces clean import sorting structures)
+    "N",   # PEP8 Naming convention enforcement
+    "RUF"  # Ruff-specific absolute modern rules
+]
+ignore = [
+    "S101", # Allows 'assert' statements for pytest modules
+    "E501"  # Let the formatter handle long agent lines, don't trigger lint errors
+]
+
+
+[tool.bandit]
+skips = ["B101", "B404", "B602"]
+
+[tool.interrogate]
+fail-under = 90
+exclude = ["tests"]
+ignore-init-method = true
+ignore-module = true
+
+[tool.ty]
+rules = { all = "error" }
+
+[tool.uv.sources]
+# poor-richard is not on PyPI; pin to the git repo (same pattern as the
+# reference agents' ccnget/xng sources). Re-running `uv lock` moves to git HEAD.
+poor-richard = { git = "https://github.com/brian-learns/poor-richard.git" }
