@@ -170,15 +170,17 @@ poor-richard-agent/
 Plain Python tool belt (mirrors `ccnget.CcngetSkill` / `xng.WebResearchSkill`). Async, deterministic, offline tools. `SkillRegistry.load()` instantiates the class **with no args** (`skill_cls()`, `skill_registry.py:479`) then calls `attach(agent)`; the class holds no shared state, so it needs no `__init__` beyond the inherited `Skill.__init__`.
 
 - `async def search(self, query: str, top: int = 3) -> list[SearchHit]` — wraps `poor_richard.search(query, top=top)` (via `asyncio.to_thread`), mapping each `(score, card, question)` → a flat `SearchHit` (the matched question/expected flattened to strings).
-- `async def get(self, card_id: str) -> ReferenceCard` — wraps `poor_richard.get(card_id)` (via `asyncio.to_thread`); returns the almanack `ReferenceCard` (its golden questions, pinned `example`, and `notes`). Deliberately the almanack's own type, like `ccnget.browse` returns its native result — the model reads `card.questions` to pick the matching question.
+- `async def get(self, card_id: str) -> CardDetail` — wraps `poor_richard.get(card_id)` (via `asyncio.to_thread`) and maps it to a flat, documented `CardDetail` (`card_id`, `name`, `pypi`, `import_name`, `questions` [each `question`/`expected`/`status`], `notes`, `example`, `offline`). **Revised after a live failure:** returning the raw almanack `ReferenceCard` let the model *guess* field names it never saw — `card.card_id`, `card.golden_questions`, `q.notes` (all wrong; the real names are `id`, `questions`, and `notes`-on-the-card) — and `SearchHit.card_id` vs `ReferenceCard.id` actively misled it. The flat `CardDetail` uses `card_id` (consistent with `SearchHit`) and the prompt/docstring now state the exact field names.
 - **No `find()` tool** (removed): `get()` already returns the card with all its `questions`, and `poor_richard.search` scans *all* cards rather than one, so a per-card `find(card_id, question)` was both redundant and mis-specified (it could not "wrap `poor_richard.search(question)`").
 - All tools documented via docstrings (prompt material). No shared state required — keeps it minimal.
 
 ### 4.5 Validated models — `models.py` (pydantic)
 
-Mirrors `xng-agent`'s pydantic validated-return pattern. **Flat fields only** — the models never embed the almanack's `ReferenceCard`/`Question` dataclasses, so the validated-return schema isn't coupled to the almanack's internals (the skill's `get()` may still *return* a `ReferenceCard` to the model, but that is a tool result, not the validated return).
+Mirrors `xng-agent`'s pydantic validated-return pattern. **Flat fields only** — the models never embed the almanack's `ReferenceCard`/`Question` dataclasses, so neither the validated return nor the tool results are coupled to the almanack's internals: `search()` returns `SearchHit` and `get()` returns the flat `CardDetail` (both with `card_id` naming).
 
 - `SearchHit`: `score: float`, `card_id: str`, `pypi: str`, `import_name: str`, `question: str | None = None`, `expected: str | None = None` (the matched golden question, flattened to strings).
+- `CardQuestion`: `question: str`, `expected: str`, `status: str = "candidate"`.
+- `CardDetail`: `card_id: str`, `name: str`, `pypi: str`, `import_name: str`, `questions: list[CardQuestion]`, `notes: str = ""`, `example: str = ""`, `offline: bool = True` — the flat, documented return of `get()` (see §4.4 revision).
 - `Answer`: `card_id`, `import_name`, `pypi`, `question: str`, `expected: str` (verified), `notes: str = ""` (gotchas/API-drift guardrails).
 - `ResearchReport`: `topic: str`, `discovered: list[SearchHit]`, `answers: list[Answer]`, `offline: bool`, `note: str | None = None`.
 

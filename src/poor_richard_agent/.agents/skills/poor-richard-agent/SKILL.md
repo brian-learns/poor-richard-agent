@@ -44,8 +44,10 @@ tools on `self.almanack` (a `PoorRichardSkill`):
 
 - `await self.almanack.search(topic)` — rank the 43 libraries; returns `SearchHit`s
   with each card's best-matched golden question + verified answer.
-- `await self.almanack.get(card_id)` — the full `ReferenceCard` (all golden
-  questions, the pinned `example`, and the `notes` that guard against API drift).
+- `await self.almanack.get(card_id)` — a `CardDetail` with `card_id`,
+  `import_name`, `pypi`, `questions` (each with `question`/`expected`/`status`),
+  `notes` (API-drift guardrails), and `example`. Use these exact field names —
+  the card's id is `card_id` (matching the search hits), not `id`.
 
 The single agentic method `research(topic)` (CodeAct) discovers, verifies against
 the card's golden question, and returns the validated `ResearchReport`. Resolve

@@ -11,9 +11,23 @@ import asyncio
 import sys
 
 from poor_richard_agent.agent import PoorRichardAgent
-from poor_richard_agent.models import Answer, ResearchReport, SearchHit
+from poor_richard_agent.models import (
+    Answer,
+    CardDetail,
+    CardQuestion,
+    ResearchReport,
+    SearchHit,
+)
 
-__all__ = ["Answer", "PoorRichardAgent", "ResearchReport", "SearchHit", "main"]
+__all__ = [
+    "Answer",
+    "CardDetail",
+    "CardQuestion",
+    "PoorRichardAgent",
+    "ResearchReport",
+    "SearchHit",
+    "main",
+]
 
 USAGE = "usage: poor-richard-agent <factual question>"
 

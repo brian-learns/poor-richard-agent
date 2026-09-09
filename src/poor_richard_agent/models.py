@@ -35,6 +35,30 @@ class SearchHit(BaseModel):
     )
 
 
+class CardQuestion(BaseModel):
+    """One golden question from a card: the question and its verified answer."""
+
+    question: str = Field(description="The golden question an agent might ask.")
+    expected: str = Field(description="The verified expected answer (source of truth).")
+    status: str = Field(default="candidate", description="'verified' or 'candidate'.")
+
+
+class CardDetail(BaseModel):
+    """The full authoritative card for one library, flattened to documented,
+    stable field names. This is what ``PoorRichardSkill.get()`` returns;
+    ``card_id`` matches ``SearchHit.card_id`` so the model can rely on the names.
+    """
+
+    card_id: str = Field(description="Stable card slug (matches SearchHit.card_id).")
+    name: str = Field(description="Human-readable library name.")
+    pypi: str = Field(description="PyPI distribution name.")
+    import_name: str = Field(description="Top-level Python module to import.")
+    questions: list[CardQuestion] = Field(description="All golden questions; each item has question, expected, status.")
+    notes: str = Field(default="", description="Gotchas / pinned API-shape guardrails for calling the library.")
+    example: str = Field(default="", description="Canonical usage snippet at the pinned version.")
+    offline: bool = Field(default=True, description="Works with no network.")
+
+
 class Answer(BaseModel):
     """A verified answer assembled from an almanack card and one of its golden questions."""
 

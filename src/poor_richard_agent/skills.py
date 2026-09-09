@@ -20,7 +20,7 @@ import asyncio
 import poor_richard
 from nooa import Skill
 
-from poor_richard_agent.models import SearchHit
+from poor_richard_agent.models import CardDetail, CardQuestion, SearchHit
 
 
 class PoorRichardSkill(Skill):
@@ -54,14 +54,28 @@ class PoorRichardSkill(Skill):
             for score, card, question in hits
         ]
 
-    async def get(self, card_id: str) -> poor_richard.ReferenceCard:
+    async def get(self, card_id: str) -> CardDetail:
         """Fetch the full authoritative card for *card_id* (a SearchHit's
         ``card_id``).
 
-        Returns the almanack ``ReferenceCard``: its name, PyPI/import names,
-        all golden questions (each with a verified expected answer), the
-        pinned example snippet, and the notes recording the exact API shape to
-        call. The model reads ``card.questions`` to pick the one matching the
-        topic. Raises for an unknown id.
+        Returns a ``CardDetail`` with these exact, stable fields (use these
+        names — do not guess):
+          ``card_id``, ``name``, ``pypi``, ``import_name``,
+          ``questions`` (a list; each item has ``question``, ``expected``,
+          ``status``), ``notes`` (API-shape guardrails, on the card — not per
+          question), ``example`` (canonical snippet), ``offline``.
+        Read ``card.questions`` to find the golden question matching the topic
+        and use its ``expected`` as the verified answer. Raises for an unknown
+        id.
         """
-        return await asyncio.to_thread(poor_richard.get, card_id)
+        card = await asyncio.to_thread(poor_richard.get, card_id)
+        return CardDetail(
+            card_id=card.id,
+            name=card.name,
+            pypi=card.pypi,
+            import_name=card.import_name,
+            questions=[CardQuestion(question=q.question, expected=q.expected, status=q.status) for q in card.questions],
+            notes=card.notes,
+            example=card.example,
+            offline=card.offline,
+        )

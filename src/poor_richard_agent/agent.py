@@ -48,10 +48,13 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
     2. Discover: await self.almanack.search(topic) ranks the right libraries
        (up to 3 SearchHit, each carrying the card's best-matched golden
        question and its verified answer).
-    3. Verify: for the best hit, await self.almanack.get(card_id) to read the
-       full card; pick the golden question that matches the topic and take its
-       verified expected answer plus the card's notes/example (the pinned API
-       shape to call).
+    3. Verify: for the best hit, await self.almanack.get(card_id) returns a
+       CardDetail with these exact fields (use these names, do not guess):
+       card_id, name, pypi, import_name, questions (a list; each item has
+       question, expected, status), notes, example, offline. Pick the entry in
+       card.questions whose question matches the topic and use its expected as
+       the verified answer; read card.notes and card.example for the pinned API
+       shape. If unsure of any field, pprint(card) first.
     4. Return a ResearchReport: discovered (the hits), answers (verified
        Answer objects), offline=True, and a note with the recommended import
        and API shape. If nothing matches, return empty answers and explain in
@@ -78,11 +81,15 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
     @strategy(CodeActStrategy())
     async def research(self, topic: str) -> ResearchReport:  # ty: ignore[empty-body]
         """Answer {topic} from the Poor Richard almanack, fully offline.
-        Discover the right library with await self.almanack.search(topic), then
-        fetch the full card with await self.almanack.get(card_id) and pick the
-        golden question that matches. Resolve any relative date in the topic
-        against self.today. Return a ResearchReport with the discovered hits,
-        the verified answer(s) (question + expected + notes), offline=True, and
-        a note giving the recommended import and API shape. If nothing matches,
-        return no answers and explain why in note."""
+        Discover the right library with await self.almanack.search(topic) (each
+        hit has card_id, pypi, import_name, question, expected), then fetch the
+        full card with await self.almanack.get(card_id) (a CardDetail with
+        card_id, import_name, pypi, questions, notes, example) and pick the
+        card.questions entry that matches. Use its expected as the verified
+        answer. Resolve any relative date in the topic against self.today.
+        Return a ResearchReport with the discovered hits, the verified answer(s)
+        (question + expected + notes), offline=True, and a note giving the
+        recommended import and API shape. If nothing matches, return no answers
+        and explain why in note. Never guess attribute names — pprint() an
+        object you are unsure about."""
         ...

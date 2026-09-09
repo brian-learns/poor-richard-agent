@@ -10,6 +10,7 @@ discovery, and the no-match path.
 import asyncio
 import json
 
+import poor_richard
 from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall
 
 from poor_richard_agent import PoorRichardAgent
@@ -40,7 +41,7 @@ def test_research_loop_discovers_and_answers():
                 "report = ResearchReport(\n"
                 "    topic='ISO 3166 France',\n"
                 "    discovered=list(hits),\n"
-                "    answers=[Answer(card_id=card.id, import_name=card.import_name, pypi=card.pypi,\n"
+                "    answers=[Answer(card_id=card.card_id, import_name=card.import_name, pypi=card.pypi,\n"
                 "               question=q.question, expected=q.expected, notes=card.notes)],\n"
                 "    offline=True,\n"
                 ")\n"
@@ -54,7 +55,9 @@ def test_research_loop_discovers_and_answers():
     assert report.offline is True
     assert report.discovered[0].card_id == "pycountry"
     assert report.answers[0].card_id == "pycountry"
-    assert report.answers[0].expected == "France"
+    # Cross-check against live almanack data (the golden answer is data, not
+    # a constant): the report's expected must match the card's first question.
+    assert report.answers[0].expected == poor_richard.get("pycountry").questions[0].expected
 
 
 def test_research_loop_no_match_returns_empty_answers():
