@@ -1,6 +1,6 @@
 # Plan: `poor-richard-agent` — a NOOA agent backed by the Poor Richard almanack
 
-**Status:** Phase 0 complete (testafize scaffold + deps resolve); Phase 1 in progress
+**Status:** Complete — Phases 0–5 done (scaffold, skill+models, agent, CLI/docs, offline tests, tooling/release)
 **Date:** 2026-07-24
 **Goal:** Build `poor-richard-agent`, a NVIDIA Object-Oriented Agents (NOOA) agent that turns a factual question into an **authoritative, offline answer** by discovering the right curated Python library from the Poor Richard almanack, calling it conventionally, and returning a validated result.
 
@@ -229,23 +229,23 @@ The agent's added value over raw library calls: **discovery** (which library), *
 - `__init__.py`: exports + `main()`.
 
 ### Phase 3 — Entry point, CLI, docs
-- Console script `poor-richard-agent = "poor_richard_agent:main"`.
-- `README.md`: usage, personas, prerequisites, offline note, gotchas pointer.
-- SKILL.md (hax convention) if included.
-- Confirm `uv build` produces a wheel with tests inside (uv_build).
+- Console script `poor-richard-agent = "poor_richard_agent:main"`. ✅
+- `README.md`: usage, prerequisites, offline note, gotchas. ✅
+- SKILL.md (hax convention). ✅ ships in the wheel.
+- `uv build` produces the wheel + sdist carrying the package, SKILL.md, and both entry points. ✅ (The agent's tests are **top-level CI tests, correctly not shipped in the wheel** — unlike the almanack, whose `--example` feature needs its golden tests inside the wheel.)
 
-### Phase 4 — Testing
+### Phase 4 — Testing ✅ (14/14 pass, all socket-blocked)
 - `tests/conftest.py`: `no_network` autouse fixture (socket block, adapted from `poor-richard`).
-- `tests/test_skills.py`: offline tests for `search`/`get`/`find` (fakes / real almanack data).
-- `tests/test_agent.py`: construction, skill activation (`self.almanack`), `today` state, `ResearchReport` return type.
-- `tests/test_research_loop.py`: agentic loop integration with mocked LLM (NOOA capability-test pattern): discovery, answer retrieval, validated return, no-match, error handling — all offline.
+- `tests/test_skills.py` (6): offline tests for `search`/`get` (real almanack data + one `monkeypatch`ed mapping case; no `find` — dropped in Phase 1).
+- `tests/test_agent.py` (6): offline construction, skill activation (`self.almanack`), `today` state, `ResearchReport` return annotation, per-instance `llm=` injection, `main()` usage → exit 2.
+- `tests/test_research_loop.py` (2): agentic loop driven by NOOA's `FakeLLMClient` (scripted `execute_python`/`return_result`): discovery→verified answer (validated return) and no-match→empty answers. The flagged risk resolved cleanly — no fallback needed.
 
-### Phase 5 — Tooling, quality, release
-- Run full tooling gate: `uv run ruff check`, `uv run bandit`, `uv run ty check`, `uv run vulture`, `uv run refurb` (formatting), `uv run interrogate` (docstrings).
-- Ensure docstring coverage ≥90% (excluding tests).
-- Offline test run: `unshare -n uv run pytest` (or socket-blocked) to prove all passes are offline-correct.
-- Package, install, and verify `poor-richard-agent --help` / `--ask` / `--example` behavior end-to-end.
-- Release to the workspace; document skill install for test agents (cold-vs-warm A/B).
+### Phase 5 — Tooling, quality, release ✅ (done)
+- **Full tooling gate** (`make check`): ruff, bandit, vulture, refurb, ty, **interrogate** (added to dev deps + uncommented in the Makefile this phase), and `uv audit`. Green.
+- **Docstring coverage 100%** (interrogate, `fail-under 90`, excluding tests).
+- **Offline test run:** `make test` runs the socket-blocked suite (14/14 offline). `unshare -n` isn't permitted in this environment, but the autouse `no_network` fixture already enforces offline-correctness, so it's a non-issue.
+- **Package & verify:** `uv build` produces the wheel + sdist (package + SKILL.md + both entry points). CLI verified end-to-end: no-arg usage → exit 2; a live question → validated `ResearchReport` JSON, exit 0.
+- **Release:** the package lives in the workspace; the hax-convention SKILL.md (Phase 3) documents the skill for the test plan's cold-vs-warm A/B.
 
 ---
 
@@ -320,8 +320,10 @@ Mirror `xng-agent`/`ccnget-agent` config in `pyproject.toml`:
 5. **Phase 5:** Run the full tooling gate and offline test run (`unshare -n uv run pytest`); fix failures; package and verify end-to-end.
 6. **Integration:** Install the agent into NOOA test agents, run the cold-vs-warm SKILL.md A/B from `test_plan.md`, and fold misses into the keyword field / card-text discipline (per `future-directions.md`).
 
-**Success criteria:**
-- All tests pass **offline** (network blocked), proving correctness and no runtime network egress.
-- `poor-richard-agent` runs under `nooa`, returns a validated `ResearchReport` as scriptable JSON with correct exit codes.
-- Tooling gate green (ruff/bandit/ty/vulture/refurb/interrogate) with ≥90% docstring coverage.
-- The agent's NOOA-native skill is discoverable via `SkillRegistry` and opt-in via `activate()`.
+**Success criteria** (all met):
+- ✅ All tests pass **offline** (network blocked) — 14/14 under the autouse `no_network` fixture, proving correctness and no runtime network egress.
+- ✅ `poor-richard-agent` runs under `nooa`, returns a validated `ResearchReport` as scriptable JSON with correct exit codes (verified live: exit 0 with answers, exit 2 for usage).
+- ✅ Tooling gate green (ruff/bandit/ty/vulture/refurb/**interrogate**/audit) with **100%** docstring coverage.
+- ✅ The agent's NOOA-native skill is discoverable via `SkillRegistry` (`poor-richard.almanack`) and opt-in via `activate()` → `self.almanack`.
+
+**Remaining (integration, out of the agent's build scope):** Step 6 — install the agent into NOOA test agents, run the cold-vs-warm SKILL.md A/B from `test_plan.md`, and fold misses into the almanack's keyword field / card-text discipline. (Note: a live run surfaced a likely almanack data bug — the `pycountry` card's golden answer for "ISO 3166-1 alpha-3 for France?" is `"France"` but `pycountry`'s `alpha_3` is `"FRA"`.)

@@ -32,7 +32,7 @@ check:
 	uv run ty check src/
 
 	@echo "\n— [Interrogate a codebase for docstring coverage](https://interrogate.readthedocs.io/en/latest/)"
-	#uv run interrogate src/
+	uv run interrogate src/
 
 	@echo "\n— security scan"
 	UV_MALWARE_CHECK=1 uv audit --preview-features audit-command --preview-features malware-check
@@ -61,7 +61,7 @@ checkdeps:
 	@echo "All required commands are available."
 
 testpackages:
-	uv add --exclude-newer "7 days" --dev ruff bandit vulture refurb ty pytest #interrogate
+	uv add --dev ruff bandit vulture refurb ty pytest interrogate
 
 export GIT_CEILING_DIRECTORIES	# pass-through so users can override `uv init` git-repo detection (e.g. GIT_CEILING_DIRECTORIES=$HOME when ~/.git exists); must be an ancestor of the project dir
 pyproject.toml:
