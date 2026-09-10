@@ -1,338 +1,185 @@
-# Plan: Using Agent Memory to Remember Almanack Library Details
+# Plan: `poor-richard-agent` — NOOA agent for the Poor Richard almanack, with shared library-usage memory
 
-**Status:** Proposed — draft plan
-**Date:** 2026-07-24
-**Scope:** An opt-in, layered enhancement to `poor-richard-agent` that uses durable agent memory to remember details about the **43 libraries in the Poor Richard almanack** — and how that memory supports the agent's library discovery, API-drift guardrails, and cross-session continuity.
-
-**Companion references:**
-- Project: `./README.md`, `./PLAN.md` (existing overall project plan; Phases 0–5 complete).
-- Reference paper: `./2607.20709.md` (arXiv 2607.20709, NVIDIA Object-Oriented Agents / NOOA).
-- Almanack: `../poor-richard/` — offline-verified 43-library catalog (`registry.py` `CARDS`), `search()` / `get()`, golden-question test linkage, `notes`/`example` API-pin.
+**Status:** Core complete (Phases 0–5); memory capability proposed (Phases 6–9)
+**Date:** 2026-09-09
+**Companion references:** `./README.md`, `./2607.20709.md` (NOOA paper), `../poor-richard/` (almanack), installed `nooa` 0.0.10 + `nooa-memory` 0.0.10.
 
 ---
 
-## 1. Purpose & Objective
+## 1. Core project (Phases 0–5 — complete)
 
-`poor-richard-agent` currently answers factual questions **offline-first and self-contained per run, with no agent memory**. Memory is deliberately absent because adding persistent state would contradict the offline-first, sandbox-safe core and risk the model writing from stale training knowledge.
+`poor-richard-agent` is a NOOA agent that turns a factual question into an authoritative, **offline** answer: the full 43-library almanack catalog is embedded in the system prompt, `await self.almanack.search()`/`get()` (a `Skill` under the `nooa.skills` entry point) are deterministic tools, and the one agentic method `research(topic) -> ResearchReport` runs a CodeAct loop with a validated pydantic return. All tests run socket-blocked (`no_network` autouse fixture); the tooling gate is ruff/bandit/vulture/refurb/ty/interrogate/uv audit.
 
-This plan proposes a **separate, opt-in, layered memory capability** that does **not** alter the core design. Memory is a **retrieval / augmentation layer over the almanack's verified data**, not a replacement for it.
+The full phase-by-phase record for Phases 0–5 (scaffold, skill+models, agent, CLI/docs, offline tests, tooling/release) is in git history (`git log -- PLAN.md`; the pre-memory plan is the revision preceding `e857202`). This document replaces it.
 
-The objective:
+**Deliberate core invariants the memory work must preserve:**
 
-1. **Durability** — the agent can remember details about each almanack library (id, import name, archetype, provenance, pinned API shape, verified answers, example usages) across **multiple sessions and runs** via **local, file-based persistence** (§5.3). Memory survives process/session boundaries but is never the run's source of truth — the verified almanack catalog and per-run discovery always remain primary.
-2. **Verified-data-grounded** — every memory entry is sourced exclusively from the almanack's offline-verified `CARDS` data and its golden-question tests. Memory never stores raw model recall.
-3. **API-drift guardrails preserved** — memory carries the pinned `notes`/`example` API shape, so a library version change does not let the agent revert to stale knowledge.
-4. **NOOA-native** — memory is implemented as typed Python state/context, rendered as prompt material, and validated through NOOA's harness APIs, per the paper's agent-as-a-Python-object model.
-5. **Minimal & opt-in** — memory is a focused, layered capability scoped to almanack-library details. It is **opt-in** (activation mechanism defined in the phased plan) and does **not** replace per-run discovery, and it does **not** introduce memory or sub-agent behavior into the core run model.
-
----
-
-## 2. Background: Current State & Constraints
-
-### 2.1 Current architecture (from `README.md` / `PLAN.md`)
-
-- The agent is a single `PoorRichardAgent(Agent, llm=nooa_llm)` class; methods are model actions, fields are model-visible state, docstrings are the prompt, type annotations are the contract.
-- Tool surface: `await self.almanack.search(query, top=3)` (deterministic ranking) and `await self.almanack.get(card_id)` (deterministic, flat `CardDetail`). Both are plain async Python, offline, wrapped via `asyncio.to_thread`.
-- Agentic method `research(topic) -> ResearchReport` uses NOOA's `@strategy(CodeActStrategy())` loop; the full 43-library catalog is embedded in the system prompt via `library_catalog()`.
-- `today` is a state field for relative-date resolution (mirrors `xng-agent`).
-- The project is **offline-first**: no runtime network egress; the one-time `financedatabase` fetch is a documented script + skippable in tests.
-
-### 2.2 Why memory is currently unused
-
-- `README.md` states: *"No memory, no network at runtime: the only LLM loop is NOOA's, and every answer comes from the almanack's verified data."*
-- The current design is constrained by **PLAN §4 (Principles 4 & 5), §2.3 (Constraints), and §13 (Constraints & Trade-offs)** to keep memory out of the core run model: memory must be NOOA-native and minimal, must be opt-in and layered, and is never the run's source of truth or a replacement for per-run discovery.
-- The plan's **Constraints (§2.3) and Constraints & Trade-offs (§13)** reinforce that the core offline-first, self-contained, no-memory run model is unchanged: memory is a retrieval/augmentation layer, not the source of answer truth.
-
-### 2.3 Constraints the plan must respect
-
-| Constraint | Origin |
+| Invariant | Where enforced |
 |---|---|
-| **Offline-first / no network egress** | README, PLAN §2.3 (Constraints table), §13 |
-| **Self-contained per run** (memory is a layer on top, not the run's source of truth) | README, PLAN §2.3, §13 |
-| **Verified data is the source of truth** (never raw model recall) | README Notes, PLAN §4 (Principle 2), §9 |
-| **API-drift guardrails** (`notes`/`example` pin the API shape) | README Notes, PLAN §4 (Principle 3), §5.1, §6.1 |
-| **NOOA-native** (Python object, typed state/context, docstrings as prompt, validated return) | PLAN §3.1 (NOOA paper review), §4 (Principles 1 & 4) |
-| **Minimal & scoped** (no bespoke DSL, no UX scope beyond reference-data workflow) | PLAN §4 (Principle 4), §7 |
-| **Type-checked & validated** (pydantic models) | PLAN §4 (Principle 6), §9 |
+| Offline-first: no runtime network egress; a test PASS = correct *and* offline | `tests/conftest.py` `no_network` (blocks loopback too) |
+| Verified almanack data is the source of answer truth | `agent.py` docstring: answers come from verified golden `expected` or a computed call — never from memory or the web |
+| API-drift guardrails: card `notes`/`example` pin the API shape | `agent.py` docstring workflow step 3 |
+| NOOA-native: one `Agent` subclass, docstrings-as-prompt, typed state, validated return | `agent.py`, `skills.py`, `models.py` |
 
 ---
 
-## 3. Reference Materials Review
+## 2. Memory: purpose & objective
 
-### 3.1 NOOA paper — `./2607.20709.md` (arXiv 2607.20709)
+Watching live traces of NOOA agents answering almanack questions, the same mistakes recur every session — guessing import names, inventing attribute names (`.iso_alpha2`), passing positional args to keyword-only APIs. Each run re-pays the discovery cost the almanack's catalog and `get()` already removed for *finding* the library, but not for *using* it.
 
-Relevant concepts that shape the memory plan:
+Objective: let agents **share learned insights about how to use the almanack libraries** across sessions and between agents, using NOOA's first-class long-term memory subsystem (`nooa-memory`, the paper's §3.7):
 
-- **Agent-as-a-Python-object** (§2): an agent is a Python class — methods are model-facing actions, fields are model-visible state, docstrings are the prompt, type annotations are contracts. Memory must therefore be a **typed field/state** on the agent, not a free-form string, and must be rendered as prompt material via docstrings or context.
-- **Design principles P1–P5** (§2):
-  - **P1 Reuse Python abstractions** — memory is built with Python classes, typed state, and the framework's existing state/context APIs; no bespoke DSL.
-  - **P2 Reframe agentic loops as typed method calls** — memory retrieval is a typed method (`memory.get(topic) -> list[LibraryMemory]`) with typed input/output, not text-only exchange.
-  - **P3 Move deterministic work out of the agentic loop** — memory ingestion and retrieval are deterministic, offline, and out-of-loop; only the agentic `research` loop is LLM-driven.
-  - **P4 Unlock the model's existing Python knowledge** — memory surfaces typed, documented library details so the model uses them directly (grounded in verified data, not recall).
-  - **P5 Expose the harness as explicit APIs** — memory is a documented, explicit part of the agent's state/context surface, not hidden.
-- **Agent loop (§3)**: CodeAct strategy with a `...` body; **typed event/state updates**; **validated return**; and **long-term memory** as part of the harness's agent-loop capability. Memory aligns with this: it is a typed state update that the loop consumes and persists.
-- **Evaluation (§4)**: capability tests, validated termination, context efficiency. Memory must be **validated** (type + shape) and **efficient** (selective, not a full re-render every turn).
-- **Harness APIs (§5)**: the framework exposes context/state/events as explicit APIs. Memory is built on the same surface, so it integrates via NOOA's state/context APIs rather than a custom mechanism.
-- **Adaptation to offline-first constraints**: NOOA's paper presents a full first-class long-term-memory subsystem (§3.7: SQLite store, vector index, seven write/recall tools, reflection consolidation, ACT-R ranking). The plan **deliberately adapts this to a minimal, verified-data-grounded layer** rather than replicating NOOA's full memory subsystem — because replicating it would introduce persistent state that contradicts the offline-first, sandbox-safe core (PLAN §2.3, §13). The adaptation preserves the paper's design principles (P1–P5) and agent-loop mechanisms while simplifying the memory subsystem to a local, offline, validated retrieval/augmentation layer (§5).
-
-### 3.2 NOOA framework & reference agents
-
-- NOOA `Agent` base class with `__init_subclass__` (`llm=` config), `_resolve_system_prompt` (class docstring → system prompt), context blocks, event manager, runtime. Memory integrates through the inherited state/context/runtime, consistent with `ccnget-agent` / `xng-agent`.
-- `ccnget-agent` / `xng-agent` are explicitly **self-contained, no-memory** agents; this plan layers memory on top without changing their core behavior.
-
-### 3.3 The Poor Richard almanack — `../poor-richard/` (git dependency)
-
-- `../poor-richard/src/poor_richard/registry.py` — `ReferenceCard`, `Question`, `Archetype`, `CARDS` (43 offline-verified cards, schema enforces unique ids, importability, verified-question↔test linkage). `search()` / `get()` are the data-access primitives.
-- `../poor-richard/docs/reference-cards.md` — question archetypes, evaluation axes (provenance, update model, offline integrity, coverage, precision, LLM output shape), card schema, golden-question test method.
-- `../poor-richard/docs/personas.md` — Noah (NOOA agent — primary almanack consumer), Hank (terminal agent), Broman (human). Memory benefits the Noah surface most directly; can extend to Hank/Broman session continuity.
-- `../poor-richard/docs/test_plan.md` — real-agent tasks (T1–T8) with scoring grid (Correct / Conventional / Discovered / Offline) and cold-vs-warm SKILL.md A/B. Memory is a candidate for extending real-agent evaluation.
-- `../poor-richard/docs/future-directions.md` — §1 discusses keyword field / card-text discipline; memory complements these by reducing per-run discovery cost.
+1. **Insights, not answers.** Memory stores usage knowledge — import names, call shapes, keyword-only pitfalls, attribute names, "X is not Y" corrections — keyed per `card_id`. It never stores computed answer values. The verified almanack remains the source of answer truth; memory supplies how-to context only.
+2. **Shared.** One SQLite store, readable/writable by every agent surface (Noah first; Hank/Broman later per `../poor-richard/docs/personas.md`), in the unowned/shared namespace.
+3. **Local embeddings.** Semantic recall via the embedding model on the local llama-server router — no cloud, no new network egress beyond the already-required local LLM endpoint.
+4. **Opt-in & additive.** Off by default; when off, the agent is byte-for-byte the current core (no tools rendered, no hooks, no file). When on, it is a pure layer: uninstallable, inert when disabled.
 
 ---
 
-## 4. Core Design Principles for Memory
+## 3. Research findings (verified 2026-09-09 against the installed packages and the local router)
 
-The following principles govern any memory addition and are normative constraints for this plan:
+### 3.1 `nooa-memory` 0.0.10 (NVIDIA, Apache-2.0, ~4.3k LOC)
 
-1. **Offline-first, sandbox-safe.** Memory has no network egress. All persistence is local and sandbox-safe. A memory PASS therefore implies correctness and no runtime network writes.
-2. **Verified data is the source of truth.** Memory content is sourced **only** from the almanack's offline-verified `CARDS` and golden-question tests. Memory never stores raw model recall — it stores *verified almanack data plus pinned API shapes*.
-3. **API-drift guardrails are preserved.** Memory carries the pinned `notes`/`example` API shape from each card. Memory is a *guardrail*, not a source of answer truth — verified almanack answers always win.
-4. **Minimal & NOOA-native.** Built with Python abstractions and NOOA's typed state/context APIs. No bespoke DSL, no UX scope beyond reference-data workflow.
-5. **Opt-in & layered.** Memory is an opt-in capability layered **on top** of the existing self-contained, per-run discovery. It does not replace discovery, and it does not change the core run model (no memory / no sub-agent in the core path).
-6. **Typed & validated.** Memory is a pydantic model with strict type and shape validation, matching the tool return shapes (`SearchHit`, `CardDetail`, etc.).
-7. **Efficient & selective.** Retrieval is selective (by archetype, provenance, topic similarity, or per-library) — memory is augmented retrieval, not a full re-render of the catalog every turn.
-8. **Consistent with the core (no contradiction).** Memory is a *retrieval/augmentation layer*; the verified almanack catalog and per-run discovery remain the primary source of truth.
-9. **Durability across sessions & runs (layered, not core).** Memory is a *durable, cross-session/run augmentation* layered on top of the self-contained per-run run model. It survives process/session boundaries via local, sandbox-safe file-based persistence (§5.3), but it is never the run's source of truth — verified almanack data always remain primary. Durability is an augmentation; it does not make the core run persistent-state-dependent.
+The paper's §3.7 subsystem, packaged. Declared deps: `nooa`, `numpy`, `pydantic` only (`litellm` is lazy-imported for the embedding backend — see §7).
+
+- **Additive install:** `MemoryManager.install(agent, config=...)` wires event hooks + a context block onto an unmodified agent; `uninstall()` restores it; `config.enabled=False` is inert. Also mountable as the `nemo.memory` skill (entry point `nooa.skills`), but that mount is zero-arg by design — it cannot carry a custom `MemoryConfig`, so we do **not** use it (§4.2).
+- **Store:** one human-inspectable SQLite file (`MemoryStore`); default path `.nooa/memory/memory.sqlite`; `Memory` records carry `type` (info/skill/episode/intent/todo/reflection/scratch), `importance` (1–10), `tags`, typed graph edges (`related`, `refines`, `contradicts`, `derived_from`, …), and a capped on-record access log.
+- **Retrieval:** hybrid dense+keyword candidate pool → ACT-R scoring (relevance/recency/importance, min-max blended) → optional 1-hop graph spread. Vector backends: `numpy` (exact, default, zero extra deps), `sqlite_vec`, `chroma`.
+- **Model-callable tools (7):** `remember`, `recall`, `search`, `update_memory`, `forget`, `associate`, `deref` — via `MemoryToolsMixin` (exposed as `self.*`) or the skill (exposed as `self.memory.*`).
+- **Spontaneous injection:** pre-turn hook derives a query (default strategy `last_message`), recalls top-k, and renders them into a bounded dynamic context block `recalled_memories` (default 2,000 chars, self-gated cadence). The agent receives relevant hints without calling any tool.
+- **Auto-encoding:** writes on `Error`/`Notification` events (salience-gated; `Error` → importance 7). This captures exactly the recurring trace mistakes this feature targets.
+- **Reflection:** post-task consolidation — deterministic dedup (cos ≥ 0.95 merge), related-edge linking, ACT-R/Ebbinghaus pruning; optional LLM `reasoner` (distill episodes → `reflection` insights) and `reconciler` (merge stale/contradicted values), both taking a `get_llm` getter so they run on the local model. Default (no reasoner/reconciler passed) = deterministic ops only, no LLM cost.
+- **Forgetting:** decay with `protected_types=("skill",)` by default — `skill`-type memories never auto-forget.
+- **Owner scoping:** `owner=""` writes to the unowned/shared namespace visible to every reader; `recall(query, owner="*")` reads all owners; per-owner rows stay private.
+- **Fault tolerance (verified in source):** the NOOA event manager logs and swallows handler exceptions (`nooa/runtime/event_manager.py:241-262`), and nooa_memory's write-on-event path is itself try/excepted — a dead embedding server degrades spontaneous injection for a turn; it cannot break the agentic loop.
+
+### 3.2 Local embeddings (live-verified)
+
+- The llama-server router at `127.0.0.1:8080` proxies `/v1/embeddings` for `nomic-embed-text-v1.5` (768-dim, ~1 s/call) and also serves `Qwen3-VL-Embedding-2B` as an alternative.
+- `EmbeddingConfig(backend="litellm", model="openai/nomic-embed-text-v1.5", endpoint="http://127.0.0.1:8080/v1", api_key="local")` works end-to-end: wrote six library-usage hints, recalled them — "ISO 3166-1 alpha-3 code for France?" surfaced the pycountry hint (cos 0.66), "timezone for latitude/longitude" surfaced the timezonefinder hint (cos 0.72), dense-only matched a paraphrase ("buying groceries" → grocery memory, cos 0.66) that keyword match missed.
+- **Gotcha (verified):** raw `MemoryStore.add(memory)` does **not** embed — vectors are stored only via `MemoryManager.remember()` or by passing `embedding=` explicitly. The manager path is what we use; the raw store is test-only.
+- **Gotcha (verified):** with a very small store, min-max score normalization lets an unrelated memory ride along at rank 2. Harmless at working scale; do not tune against toy stores.
+- The package default embedder is `HashingEmbedder` (deterministic, offline, zero-deps) — the correct default for the socket-blocked test suite.
 
 ---
 
-## 5. Memory Architecture
+## 4. Design decisions
 
-### 5.1 Memory store — `LibraryMemory`
+1. **Use `nooa-memory` as-is; build no custom store.** The earlier draft plan (git `e857202`..`cd9e7a8`) proposed hand-rolling a pydantic "LibraryMemory" store re-ingested from `CARDS`. That design is retired: it stored a snapshot of data the agent already has in-prompt and one `get()` away, accumulated nothing across sessions, and reinvented (worse) what `nooa-memory` ships. The recurring-mistake problem also *requires* model-authored memories, which that plan's "never store model recall" constraint forbade.
+2. **Mount as a configured skill subclass, activated through `SkillRegistry`** — the same opt-in mechanism the almanack skill uses (`agent.py:82-84`), rather than `MemoryManager.install` in `__init__` or the zero-arg `nemo.memory` entry point. A `PoorRichardMemorySkill(MemorySkill)` subclass reads its `MemoryConfig` from environment in `__init__` (still zero-arg instantiable, as `SkillRegistry.load()` requires), so the custom embedding config rides the standard activation path. Tools appear as `self.memory.*`; the schema guide is auto-injected with the correct `self.memory.` prefix.
+3. **Opt-in via `NOOA_MEMORY=1`.** Unset → the skill is not activated: no `self.memory` attribute, no tools in the prompt, no hooks, no SQLite file. The default agent construction is unchanged, so the existing suite passes untouched.
+4. **Shared namespace: `owner=""`.** All agents write to and read from the shared namespace on one store file — the "share hints between agents" requirement. (Per-owner scoping with `owner="*"` recall remains available later if private tiers are wanted.)
+5. **Insight discipline is prompt-level, plus reviewability.** Nothing in `nooa-memory` hard-blocks a stored answer value — the injected schema guide already says "distilled facts/skills/decisions, one self-contained item each — never raw transcripts", and we add one docstring paragraph: store only how-to insights per `card_id` (imports, call shapes, pitfalls), never computed answer values; prefer `type="skill"` (decay-protected) for how-tos. The store is a human-inspectable SQLite file; a wrong memory is `update_memory`/`forget`-able by the model or editable on disk. This is a known, accepted limit (§7).
+6. **Local nomic embeddings by default when memory is on; hashing in tests.** `NOOA_EMBED_BACKEND` defaults to `litellm` against `NOOA_LLM_BASE` (the router already required for the LLM) with model `openai/nomic-embed-text-v1.5`; tests exercise the `hashing` backend so the socket-blocked suite never touches the router.
+7. **Reflection: deterministic only for now.** `MemorySkill` passes no reasoner/reconciler, so post-task reflection does dedup/link/prune with zero LLM calls. LLM-backed reasoner/reconciler (local Qwen) is an optional later phase — it is where repeated `Error` episodes get distilled into durable `skill` insights.
+8. **Keep the Error auto-write.** Salient errors ("model guessed `.iso_alpha2` → AttributeError") are the raw material of the insights we want; the model's curation guide tells it to refine or forget auto-written noise.
 
-A typed, pydantic-backed store of almanack-library details, built as a Python class extending NOOA's state/context surface (mirroring `PoorRichardAgent`'s use of state fields).
+---
 
-**What it stores** (one entry per almanack library card):
+## 5. Integration
 
-| Field | Source | Purpose |
+### 5.1 `src/poor_richard_agent/skills.py` — add `PoorRichardMemorySkill`
+
+```python
+from nooa_memory import EmbeddingConfig, MemoryConfig
+from nooa_memory.memory_skill import MemorySkill
+
+class PoorRichardMemorySkill(MemorySkill):
+    """Shared almanack library-usage memory (opt-in via NOOA_MEMORY=1)."""
+
+    def __init__(self) -> None:
+        super().__init__(MemoryConfig(
+            enabled=True,
+            path=os.environ.get("NOOA_MEMORY_PATH", ".nooa/memory/memory.sqlite"),
+            owner="",
+            embedding=EmbeddingConfig(
+                backend=os.environ.get("NOOA_EMBED_BACKEND", "litellm"),
+                model=os.environ.get("NOOA_EMBED_MODEL", "openai/nomic-embed-text-v1.5"),
+                endpoint=os.environ.get("NOOA_LLM_BASE", "http://127.0.0.1:8080/v1"),
+                api_key="local",
+            ),
+        ))
+```
+
+(`MemorySkill.__init__` rewrites `api_prefix` to `self.memory.` automatically.)
+
+### 5.2 `pyproject.toml` — second entry point
+
+```toml
+[project.entry-points."nooa.skills"]
+"poor-richard.almanack" = "poor_richard_agent.skills:PoorRichardSkill"
+"poor-richard.memory" = "poor_richard_agent.skills:PoorRichardMemorySkill"
+```
+
+Also add `litellm` to dependencies (nooa-memory lazy-imports it but does not declare it).
+
+### 5.3 `src/poor_richard_agent/agent.py` — activation + docstring paragraph
+
+- `__init__`: `if os.environ.get("NOOA_MEMORY"): self.skills.activate(["poor-richard.memory"])` — alongside the almanack activation.
+- Class docstring: a `{self.memory_block()}` placeholder (mirrors `{self.library_catalog()}` at `agent.py:51`) returning `""` when memory is off, or — when on — the insight-discipline paragraph: memory holds how-to insights about almanack libraries keyed by `card_id` (imports, call shapes, pitfalls); store/consult only usage knowledge, never computed answer values; recalled memories are hints, not ground truth — the card's `notes`/`example` and verified golden answers still win.
+
+### 5.4 What the model gains when on
+
+- `self.memory.remember/recall/search/update_memory/forget/associate/deref` (rendered in `doc(self)`).
+- The auto-injected `memory_system` guide (nooa_memory's curation instructions, `self.memory.`-prefixed).
+- Per-turn `recalled_memories` context block: top-k hints for the current topic, bounded to ~2,000 chars.
+- Auto-written `Error`/`Notification` memories, deduped/refined by post-task reflection.
+
+---
+
+## 6. Phased implementation
+
+### Phase 6 — Configured memory skill
+- `PoorRichardMemorySkill` (`skills.py`) + `poor-richard.memory` entry point + `litellm` dependency.
+- Env-gated activation in `PoorRichardAgent.__init__`; `{self.memory_block()}` docstring placeholder.
+- Verify: off-by-default construction is unchanged (existing suite green); on-construction renders `self.memory.*` tools and the guide block.
+
+### Phase 7 — Shared store & embedding wiring
+- Default shared path (env-overridable `NOOA_MEMORY_PATH`) and `owner=""`.
+- Live smoke: write/recall round-trip through the manager with the local nomic embedder; confirm dense+hybrid recall and spontaneous injection in a real `research()` run against the router.
+
+### Phase 8 — Offline tests & quality gate
+- Memory-on tests under `no_network` with the **hashing** embedder: activation, tool rendering, remember→recall round-trip, shared-namespace visibility, skill-type decay protection, retrieval fault tolerance (dead embedder → loop survives, injection just missing).
+- Config-wiring test asserting the litellm `EmbeddingConfig` values without any network call.
+- Full tooling gate (`make check`), docstring coverage ≥90%.
+
+### Phase 9 — Learning loop (optional)
+- LLM-backed reflection: `llm_reasoner`/`llm_reconciler` wired to `nooa_llm` (local), so repeated `Error` episodes distill into durable `skill` insights and stale hints get reconciled.
+- Seed the store from observed trace mistakes (manual `remember` or a script) and run the cold-vs-warm A/B from `../poor-richard/docs/test_plan.md` to measure the recurring-mistake reduction.
+
+---
+
+## 7. Risks & mitigations
+
+| Risk | Assessment | Mitigation |
 |---|---|---|
-| `card_id` | almanack `ReferenceCard.id` | stable identity |
-| `name` | `ReferenceCard.name` | display name |
-| `pypi` | `ReferenceCard.pypi` | distribution |
-| `import_name` | `ReferenceCard.import_name` / importability | how the model imports the library |
-| `archetype` | almanack `Archetype` | classification (e.g. calendar, constant, checksum) |
-| `provenance` | almanack provenance | why the library is included |
-| `pinned_api` | `Question.notes` + `Question.example` | API-shape guardrail (pinned, not model-recalled) |
-| `verified_answers` | golden-question `expected` values | verified values for matching questions |
-| `example_usages` | example usages from the card | concrete call shapes |
-| `related_questions` | linked golden questions | query patterns that map to this library |
-| `offline` | `ReferenceCard` offline flag | integrity marker |
-
-**Design notes:**
-- The store is **sourced exclusively from offline-verified almanack data**; it never holds raw model recall.
-- Entries are pydantic-validated to match the tool return shapes (`CardDetail`-style), so memory is type-checked and consistent with the existing models.
-- The store holds **no shared mutable state** beyond its entries, mirroring the skill's minimal-state approach; any per-run mutable state is guarded per NOOA's concurrency model.
-- **Retrieval grounding**: each entry carries `verified_answers` (golden-question `expected` values) and `related_questions` (linked golden-question patterns) so topic-based retrieval is possible without re-rendering the full catalog every turn. The full golden-question text is captured at ingestion via the almanack's `Question` records, enabling topic matching.
-- **Verification status**: entries are derived from the almanack's verified cards; the almanack's `status` (e.g. `verified` vs `candidate`) is honored so only verified values are surfaced as `verified_answers`, preserving the almanack's integrity semantics.
-
-### 5.2 Data ingestion — offline, from `CARDS`
-
-- Memory is **re-ingested from the almanack's offline-verified `CARDS`** (and golden-question tests) at construction/update time — an offline, deterministic operation.
-- Ingestion is **out-of-loop** (PLAN P3): it happens once at setup or on explicit re-sync, never during the agentic loop.
-- Ingestion is **validated**: every entry is type-checked against the almanack schema, so memory is guaranteed consistent with the verified data.
-- Memory reflects the almanack's **current** offline-verified state; when almanack data updates, ingestion re-pulls the verified cards (offline).
-
-### 5.3 Persistence — offline, sandbox-safe
-
-- Memory is **persisted locally as a file-based, sandbox-safe store** (e.g., a structured file — JSON or SQLite-backed) with **no network writes** — file-based persistence is used for durability across sessions and runs.
-- Storage location is sandbox-safe and confined to the agent's runtime environment (e.g., the agent's working directory or a designated data path); no external/network dependencies.
-- **Startup loading**: at agent construction, the persisted store is **re-read** from the file, validated (type + shape), and merged into the memory store before the agent starts. A missing/empty store is treated as an empty (cold) store — never an error.
-- Persistence is **reversible** (e.g., backed by the on-disk file or a snapshot) if needed for recovery or rollback.
-- Concurrent access to shared memory state is guarded where concurrency occurs (NOOA P1/P3).
-
-### 5.4 Activation & context binding
-
-- Memory is accessed as a **typed method** on the agent: `await self.memory.get(topic) -> list[LibraryMemory]` (PLAN P2) — a typed, out-of-loop retrieval, **invoked by agent code**, not by the model. It returns relevant, validated library details for the turn; it is never an agentic (model-invoked) tool.
-- **Context rendering into the CodeAct loop**: during `research()`, memory is integrated into the NOOA CodeAct context as prompt material. The retrieved details (or a bounded summary of the relevant subset of the full store) are bound to `self.memory` and rendered via the agent's context/docstring mechanism (NOOA §2/§3), so the model sees only what is relevant and bounded — the full `self.memory` store is never injected wholesale into context.
-- **Validation before binding**: every memory entry and every retrieval result is validated (type + shape) before binding, and the binding renders only validated, well-formed data, so the model receives only verified, type-consistent material.
-
-### 5.5 Retrieval — selective, grounded
-
-Retrieval selects library details relevant to the current turn, complementing the existing `search()` ranking:
-
-- **By query/archetype/provenance** — retrieve cards whose archetype or provenance matches the topic.
-- **By topic similarity** — retrieve the most relevant library(s) for the question.
-- **Per-library** — surface a known library's pinned API shape when the model has already seen it (e.g., recurring "ISO 3166-1 code" questions).
-- **Guardrailed** — retrieval returns only verified, validated entries; it never surfaces raw model recall or unverified data.
+| **Answer values leak into memory** (violating "insights, not answers") | Medium — prompt-level discipline only; nothing hard-blocks it | Docstring discipline paragraph (§4.5); `card_id`-tagged, `skill`-typed writes; store is one inspectable SQLite file — review + `forget`/edit on disk; Phase 9 reconciler merges/corrects |
+| **Stale hints after an almanack/library update** | Medium — hints are now genuinely agent-authored and can rot | Hints carry the `card_id` tag (scoping); `refines`/`contradicts` edges + Phase 9 reconciler; on a major almanack bump, prune the store (documented ops note); answers still always come from the card, so a wrong hint degrades efficiency, not correctness |
+| **Embedding server down at runtime** | Low | Verified: event-handler exceptions are logged and swallowed (`nooa/runtime/event_manager.py:241-262`); litellm calls are timeout-bounded (60 s) with retries; failure degrades spontaneous injection for a turn, never breaks the loop |
+| **`litellm` undeclared by nooa-memory** | Low | Add `litellm` to our dependencies (§5.2); it is already in `uv.lock` via nooa |
+| **Test-suite coupling to the router** | Low | Hashing embedder is the package default and the test default (§4.6); litellm config asserted, not called |
+| **Context bloat from injected memories** | Low | Bounded block (default 2,000 chars, top-k 5, self-gated cadence); `SpontaneousConfig` knobs available |
+| **Small-store ranking artifacts** (min-max normalization) | Cosmetic | Noted (§3.2); do not tune retrieval against toy stores |
+| **Shared store write contention** (multiple agents, one file) | Low | SQLite with WAL; agents in this workflow run sequentially; revisit only if concurrent surfaces appear |
 
 ---
 
-## 6. Integration with the Existing Agent
+## 8. Success criteria
 
-### 6.1 `PoorRichardAgent` (`src/poor_richard_agent/agent.py`)
-
-- Add a **`self.memory: LibraryMemory`** state field (NOOA P1: fields = model-visible state). This is **opt-in** (activation mechanism defined in the phased plan) and initialized from the ingested almanack data.
-- **`__init__`:** construct `LibraryMemory` from the offline-verified almanack `CARDS` (ingestion is offline-safe; no connection until a turn runs). Guard any concurrent initialization. At construction, the persisted store is re-read, validated, and merged into the store (§5.3).
-- **`research(topic)`** (CodeAct loop):
-  1. **Context** — resolve relative dates against `self.today` as before.
-  2. **Discover** — as before, pick from the system-prompt catalog; **`memory.get(topic)` is invoked by agent code** (out-of-loop, §5.4/§6.2) to surface relevant, known library details, which are then bound into the CodeAct context as prompt material. This accelerates discovery (memory is an *augmentation*, not the sole source — catalog-based discovery remains primary).
-  3. **Verify or compute** — as before (`search` → `get` → golden answer or computed call). Memory's `pinned_api` (the card's pinned `notes`/`example` API shape) is surfaced in context as an **API-drift guardrail**: the model is instructed to prefer the card's pinned `notes`/`example` over its own recall. **Verified almanack answers always take precedence over memory** — memory supplies context and guardrails only, never answers.
-  4. **Report** — assemble the validated `ResearchReport`. Memory-sourced details (a known library's pinned API shape, previously discovered library details) are included where relevant, but every answer still comes from verified almanack data or a computed call — memory never substitutes for the verified source of truth.
-- **System prompt / docstrings** (NOOA §2): the memory store and its retrieval mechanism are described in docstrings as prompt material; the agent's self-description includes how memory augments discovery and preserves API guardrails, consistent with NOOA's docstrings-as-prompt model.
-
-### 6.2 Skill tools (`src/poor_richard_agent/skills.py`)
-
-- `memory.get(topic)` is a **deterministic, offline, out-of-loop** retrieval (PLAN P3 & P2): it is a plain async Python method wrapping the offline store, **invoked by agent code** within `research()` (§6.1) — **not** a model-callable agentic tool. This keeps retrieval out of the LLM-driven loop and consistent with NOOA's P3 (deterministic work out of the agentic loop).
-- It is exposed through the skill module (`PoorRichardSkill`), consistent with how `search`/`get` are exposed as deterministic, async, `asyncio.to_thread`-wrapped tools.
-- Memory retrieval is **timeout-bounded** (`asyncio.wait_for`) and **resource-hygienic** (cleanup in `finally`), matching the existing tool standards.
-
-### 6.3 Validated models (`src/poor_richard_agent/models.py`)
-
-- Extend pydantic models as needed to represent memory entries (`LibraryMemory`) and any memory-augmented return, **flat fields only** (PLAN §4, Principle 6): never embed almanack internals.
-- Memory models mirror `CardDetail`'s flat shape so memory entries are type-consistent with the existing validated tool returns.
-
-### 6.4 State, context, and docstrings-as-prompt-material
-
-- Memory is exposed through NOOA's **state/context/event** surface (harness APIs, paper §3/§5), not a bespoke mechanism (NOOA §5).
-- `today` and `self.memory` are both model-visible state fields; both visible to the model for relative-date and library-detail resolution.
-- Memory is documented in docstrings as prompt material (NOOA §2) — it is part of the agent's self-describing identity.
+- **Off by default:** with `NOOA_MEMORY` unset, the agent constructs and behaves exactly as today; the existing socket-blocked suite passes unchanged.
+- **Opt-in layer:** with `NOOA_MEMORY=1`, `self.memory.*` tools + guide render in the prompt; a SQLite store is created at the configured path; uninstall/disable leaves the agent unchanged.
+- **Shared insights:** a hint written by one agent run is recalled (semantically, via local embeddings) by a fresh run on the same store; `owner=""` visibility verified.
+- **Insight discipline:** docstring paragraph present; no computed answer values in seeded/tested memory content.
+- **Offline-safe:** all new tests pass socket-blocked; a dead embedding server does not break `research()` (fault-tolerance test).
+- **Gate:** `make check` green (ruff/bandit/vulture/refurb/ty/interrogate/uv audit), docstring coverage ≥90%.
+- **Measured benefit (Phase 9, optional):** cold-vs-warm A/B shows fewer recurring API/import mistakes with the warmed store.
 
 ---
 
-## 7. Use Cases & Benefits
+## 9. Constraints & trade-offs
 
-| Use case | How memory helps |
-|---|---|
-| **Recurring / typed questions** (e.g., "ISO 3166-1 alpha-3 code for France?" across sessions) | Memory surfaces the right library's pinned API shape instantly — no re-discovery from scratch. |
-| **API-drift guardrails** (core benefit) | Memory stores the pinned `notes`/`example` API shape per library; even if a library version changes, the agent uses the pinned shape, never stale recall. |
-| **Discovery acceleration** | Memory of library archetypes/provenance helps the model pick the correct library faster, complementing `search()` ranking. |
-| **Cross-session continuity** | A NOOA agent running across multiple runs builds a richer, durable understanding of the almanack's libraries over time. |
-| **Noah session continuity** (primary consumer) | Memory extends Noah's understanding within and across sessions, aligned with `../poor-richard/docs/personas.md` (Noah is the primary almanack consumer). |
-| **Hank / Broman continuity** (optional) | Memory can extend terminal-agent and human session continuity, per `../poor-richard/docs/personas.md`. |
-| **Evaluation continuity** | Memory supports the test plan's (Correct / Conventional / Discovered / Offline) scoring by reducing per-run discovery cost and enabling Conventional/Discovered credit. |
-
-> **Durability mechanism**: cross-session/run continuity relies on **file-based persistence** (§5.3) — memory is re-read, validated, and merged at agent startup; it survives process/session boundaries. It is a *durable augmentation*, never the run's source of truth (verified almanack data always remain primary).
-
----
-
-## 8. Mechanics: How Memory Supports Memory-Related Details
-
-1. **Ingestion (offline, out-of-loop):** `LibraryMemory` is populated from the almanack's offline-verified `CARDS` + golden-question tests at construction/re-sync. Validated against the almanack schema.
-2. **Selective retrieval (typed, out-of-loop):** `memory.get(topic)` returns a validated, type-consistent list of relevant `LibraryMemory` entries — grounded in verified data, never raw recall.
-3. **Context binding (validated, typed):** retrieved details are bound to `self.memory` and rendered as prompt material via docstrings/context, after type+shape validation.
-4. **Guardrail enforcement:** memory's `pinned_api` is consulted so the model prefers the card's pinned `notes`/`example` over its own recall — preserving API-drift protection.
-5. **Augmentation (not replacement):** memory accelerates discovery but does **not** replace the system-prompt catalog or `search()` ranking; verified almanack data remains the source of truth.
-
----
-
-## 9. Data & Validation Requirements
-
-- **Source exclusivity:** memory content is sourced **only** from offline-verified almanack data (`CARDS`, golden-question tests). No unverified model recall enters the store.
-- **Type & shape validation:** every memory entry is pydantic-validated to match the existing tool models (`SearchHit`, `CardDetail`, `Answer`, etc.); memory is type-checked (`ty all = "error"`).
-- **Consistency with almanack data:** memory entries must stay consistent with the almanack's schema, ids, and verified-question↔test linkage. Ingestion re-pulls verified cards on updates.
-- **Offline integrity:** memory is offline; a memory operation's correctness is verifiable offline (no network).
-- **Updateability & reversibility:** memory can be re-ingested and restored (reversible) to reflect almanack updates, without network.
-- **Retrieval validation:** `memory.get(topic)` results are validated (type + shape) before being bound and rendered; retrieval failures are handled fault-tolerantly (e.g., return an empty/bounded result, surface a safe fallback, or log) so retrieval never breaks the agentic loop.
-- **Initialization validation:** memory initialization from `CARDS` is validated end-to-end — all entries are type-checked against the schema, and a malformed or incomplete store is handled (e.g., degraded to an empty store with a safe fallback) rather than failing agent startup.
-- **Concurrency safety:** shared memory state is guarded where concurrent calls occur (NOOA P1/P3).
-
----
-
-## 10. Risks & Mitigations
-
-| Risk / Open question | Assessment | Mitigation / Decision |
-|---|---|---|
-| **Stale memory vs. almanack updates** | Medium | Memory is sourced from the almanack's current offline-verified state; ingestion re-pulls verified cards on update (offline). Memory is a *layer*, not the source of truth — verified almanack data always wins. |
-| **Memory introducing staleness that conflicts with verified data** | Medium | Memory is an **augmentation/guardrail** layer over verified data; verified almanack answers always take precedence over memory. Memory only supplies context, not answers. |
-| **Offline persistence limits** (local-only storage) | Low | Use sandbox-safe, local, reversible persistence (file/in-process); no network. Local persistence is sufficient for offline-first operation. |
-| **Concurrency / shared state** | Low | Guard shared memory state where concurrent calls occur; mirror `ccnget`/`xng` shared-resource cleanup (PLAN §9, concurrency safety; §13 trade-off). |
-| **NOOA version compatibility** | Low | Memory uses NOOA's typed state/context APIs; follow NOOA's API contract and re-verify after any upgrade (PLAN §10 Risks). |
-| **Scope creep / core-contradiction risk** | Low | Memory is **opt-in and layered**; it does not change the core no-memory, self-contained design. Memory is a retrieval/augmentation layer, not a replacement. |
-| **Memory retrieval cost / context bloat** | Low | Retrieval is selective (not a full catalog re-render); memory is efficient, type-validated, and rendered as minimal prompt material (NOOA context-efficiency §4). |
-| **Durability across sessions/runs** | Medium | Cross-session/run continuity relies on file-based persistence (§5.3); persistence failure, stale on-disk data, or concurrent load during startup could leave memory inconsistent or missing. Mitigation: validated startup loading (§5.3), offline test coverage of persistence & durability (Phase 10), and local sandbox-safe storage (§13 trade-off). |
-| **Opt-in activation & lifecycle** | Low–Medium | If the opt-in mechanism is poorly defined, memory could be unexpectedly active (or inactive) across runs. Mitigation: explicit, testable activation/deactivation lifecycle (Phase 8), and opt-in flag/env override. |
-| **Retrieval fault tolerance** | Low | `memory.get()` is out-of-loop; retrieval failures must not break the agentic loop. Mitigation: fault-tolerant fallbacks for retrieval errors (§9) and offline coverage in Phase 10. |
-| **Memory in real-agent evaluation** (test_plan T1–T8, A/B) | Low–Medium | Memory is a candidate for extending real-agent scoring; validate via the offline test suite first, then fold into the cold-vs-warm SKILL.md A/B from `../poor-richard/docs/test_plan.md`. |
-
----
-
-## 11. Phased Implementation Plan
-
-The plan builds on the existing **Phases 0–5** (scaffold, skill+models, agent, CLI/docs, offline tests, tooling/release — all complete). Memory is a new **Phase 6+** rollout, layered on top.
-
-### Phase 6 — Memory data model & offline ingestion
-- Define `LibraryMemory` pydantic model (§5.1 fields) and its validation schema.
-- Implement **offline ingestion** from almanack `CARDS` + golden-question tests (§5.2) — validated, out-of-loop.
-- Confirm ingestion is offline-safe and schema-consistent.
-
-### Phase 7 — Memory store & offline persistence
-- Implement `LibraryMemory` store with **offline, sandbox-safe persistence** (§5.3).
-- Add concurrency guarding for shared memory state (NOOA P1/P3).
-- Verify persistence is reversible and local-only (no network).
-
-### Phase 8 — Memory integration into the agent
-- Define the **opt-in activation mechanism** (`self.memory` opt-in flag, explicit enable/disable lifecycle — env/flag override, testable).
-- Define the **`memory.get(topic)` invocation** in `research(topic)`: invoked by agent code (out-of-loop, §5.4/§6.2), results bound into the CodeAct context as prompt material.
-- Add `self.memory` state field to `PoorRichardAgent` (`agent.py`); initialize from ingested data.
-- Integrate `memory.get(topic)` into `research(topic)` (§6.1) as a discovery **augmentation**, preserving catalog-based discovery as primary.
-- Ensure memory's `pinned_api` enforces API-drift guardrails during verify/compute (§6.1).
-
-### Phase 9 — Retrieval, context binding & guardrails
-- Implement **selective retrieval** (`memory.get` by topic/archetype/provenance/per-library) — typed, out-of-loop (§5.5).
-- **Render memory into the CodeAct loop context**: integrate memory rendering into `research()`'s NOOA CodeAct context (system prompt, dynamic context) as bounded prompt material (§5.4, NOOA §2/§3), ensuring the full `self.memory` store is never injected wholesale.
-- Bind retrieved details to `self.memory` and render as prompt material via docstrings/context (§5.4, NOOA §2).
-- Validate binding (type + shape) before model exposure.
-- Ensure **retrieval fault tolerance** (fail-safe fallbacks for retrieval errors) — §9.
-
-### Phase 10 — Testing (offline, no-network)
-- **Memory store tests** (offline): ingestion correctness, schema/type validation, persistence round-trip, retrieval selectivity.
-- **Memory integration tests** (`test_agent`): `self.memory` construction, ingestion from `CARDS`, retrieval in `research`, validated binding, API-drift guardrail behavior.
-- All tests run socket-blocked (autouse `no_network` fixture, adapted from `poor-richard`), mirroring PLAN §6.
-- Agentic loop tests: verify memory does not break the CodeAct loop and validated return.
-
-### Phase 11 — Quality gate & integration
-- Run full tooling gate (`make check`): ruff, bandit, vulture, refurb, **ty**, **interrogate**, **uv audit** — memory code included (mirrors PLAN §7).
-- Docstring coverage ≥90% (NOOA docstrings-as-prompt material).
-- Offline test run (`no_network` suite).
-- **Real-agent A/B** (optional): install the agent's skill into NOOA test agents, run the cold-vs-warm SKILL.md A/B from `../poor-richard/docs/test_plan.md`, and fold memory's contribution into the scoring grid (Correct / Conventional / Discovered / Offline).
-
----
-
-## 12. Success Criteria
-
-- **Offline & no-network:** memory operations are fully offline; a pass means correctness and no runtime network egress.
-- **Verified-data-grounded:** every memory entry is sourced from almanack's offline-verified `CARDS`/golden tests; no raw model recall enters the store.
-- **API-drift guardrails:** memory's `pinned_api` is preserved and enforced — the agent prefers the card's pinned `notes`/`example` over its own recall.
-- **NOOA-native:** memory is typed state/context, validated via pydantic, rendered as prompt material via docstrings, and exposed via NOOA's harness APIs.
-- **Durability across sessions/runs:** memory is persisted locally (file-based, §5.3) and survives process/session boundaries via validated startup loading (§5.3); a pass implies memory persists correctly across sessions and restarts.
-- **Minimal & opt-in:** memory is a layered, opt-in capability that does **not** alter the core no-memory, self-contained design.
-- **Tests:** memory store + integration tests pass offline (no-network), covering ingestion, **persistence & durability across sessions/runs**, retrieval, guardrails, **retrieval fault tolerance**, and loop integration.
-- **Tooling gate:** full quality gate (ruff/bandit/ty/vulture/refurb/interrogate/audit) green, 100% docstring coverage.
-- **Real-agent (optional):** memory contribution validated in the cold-vs-warm SKILL.md A/B from `../poor-richard/docs/test_plan.md`.
-
----
-
-## 13. Constraints & Trade-offs
-
-- **Core design preserved:** memory is opt-in and layered; the core offline-first, self-contained, no-memory run model is unchanged. Memory does **not** replace per-run discovery.
-- **Memory is not the answer source:** verified almanack data (catalog + golden answers) always remain the source of truth. Memory is a retrieval/augmentation and guardrail layer.
-- **Local-only persistence:** memory persistence is offline/sandbox-safe (local, reversible); no network is introduced.
-- **Scoping:** memory is focused on almanack-library details only — no UX scope beyond the reference-data workflow.
-- **Augmentation over replacement:** memory accelerates and enriches discovery but does not replace the system-prompt catalog or `search()` ranking.
-- **Durability across sessions vs. self-contained per run:** memory trades the "self-contained per run" minimalism for durable, cross-session/run continuity via local file-based persistence — but durability is layered on top; the core run model remains self-contained, and verified data always win.
-- **Simplified memory subsystem vs. NOOA's full memory:** NOOA's paper presents a full first-class memory subsystem (SQLite, vector index, consolidation). The plan deliberately simplifies this to a minimal, offline, validated retrieval/augmentation layer — sacrificing NOOA's consolidation/vector features for offline-first safety and minimalism.
-- **memory.get() as out-of-loop method vs. model-callable tool:** `memory.get()` is implemented as a deterministic, out-of-loop method invoked by agent code (per NOOA P2/P3), not a model-callable agentic tool. This keeps retrieval out of the LLM-driven loop and consistent with the offline-first, minimal design, at the cost of a model-initiated retrieval interface.
-
----
-
-## 14. Next Steps
-
-1. **Pre-review fixes:** resolve internal cross-references (§2.2, §2.3), correct `memory.get()` design consistency (§6.2: out-of-loop deterministic method, not model-callable tool), and clarify durability across sessions (§1, §5.3).
-2. **Phase 6:** Define `LibraryMemory` model + offline ingestion from `CARDS`/golden tests.
-3. **Phase 7:** Implement offline, sandbox-safe file-based persistence + startup loading + concurrency guarding.
-4. **Phase 8:** Define the opt-in activation mechanism; define `memory.get(topic)` invocation in `research(topic)` (agent-code-driven, out-of-loop); integrate `self.memory` and `memory.get()` into `PoorRichardAgent` and `research()` as a discovery augmentation.
-5. **Phase 9:** Implement selective retrieval; render memory into the CodeAct loop context (bounded, not full-store); validated binding + API-drift guardrails; ensure retrieval fault tolerance.
-6. **Phase 10:** Write offline tests (memory store, ingestion, persistence & durability across sessions/runs, retrieval, guardrails, retrieval fault tolerance, loop integration) under the no-network suite.
-7. **Phase 11:** Run the full quality gate + offline test run, then optionally run the real-agent cold-vs-warm A/B from `../poor-richard/docs/test_plan.md`.
-
-**Success criteria:** all listed in §12 — memory is an offline, verified-data-grounded, NOOA-native, opt-in, layered capability that preserves the core design and preserves API-drift guardrails.
+- **Core invariants unchanged** (§1): offline-first, verified-data answer truth, API-drift guardrails, NOOA-native single class. Memory is a layer; when off, the core is untouched.
+- **Memory is not the answer source.** Recalled hints are context; the card's `notes`/`example` and verified golden answers always win. This is stated in the agent docstring so the model treats injections as hints.
+- **Insight storage is model-curated, human-reviewable** — a deliberate departure from the retired draft plan's "verified data only" rule, required by the recurring-mistake objective, and compensated by the inspectable single-file store.
+- **Loopback embeddings are "offline" in the project's sense**: same local router as the LLM itself (already a runtime requirement); the socket-blocked test suite still covers all code paths via the hashing backend.
+- **No custom retrieval, schema, or persistence code** — all of it comes from `nooa-memory`; our package contributes one configured skill subclass, one entry point, one docstring paragraph, and tests.
