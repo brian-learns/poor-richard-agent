@@ -1614,6 +1614,20 @@ wheels = [
 ]
 
 [[package]]
+name = "nooa-memory"
+version = "0.0.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "nooa" },
+    { name = "numpy" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/bd/5c8925b4c46d5bb81e1dba394dfd249cac7ce3cd31910994d4d25477e40c/nooa_memory-0.0.10.tar.gz", hash = "sha256:4bc67e2c66daa9dcc15974cfad1b1cfa2ab89c4540f6bdf4ba1a0825594a37b6", size = 97721, upload-time = "2026-09-04T06:04:34.983Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/00/107ea87f7fc0709e520f3b69d082a2ee09447335e9021366811ed60ceccf/nooa_memory-0.0.10-py3-none-any.whl", hash = "sha256:f51183011172485531e06f7cafd198aab465313ede334e1c967e512f99fe7a4b", size = 71125, upload-time = "2026-09-04T06:04:35.969Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.5.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1982,7 +1996,9 @@ name = "poor-richard-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "litellm" },
     { name = "nooa" },
+    { name = "nooa-memory" },
     { name = "poor-richard" },
     { name = "pydantic" },
 ]
@@ -2000,7 +2016,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "litellm", specifier = ">=1.100.1" },
     { name = "nooa", specifier = ">=0.0.9" },
+    { name = "nooa-memory", specifier = ">=0.0.10" },
     { name = "poor-richard", git = "https://github.com/brian-learns/poor-richard.git" },
     { name = "pydantic", specifier = ">=2" },
 ]

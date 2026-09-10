@@ -1,4 +1,4 @@
-"""Deterministic almanack skill: offline access to the Poor Richard registry.
+"""Almanack skills: offline registry tools + shared library-usage memory.
 
 Registered under the ``nooa.skills`` entry-point group (see pyproject.toml),
 so any NOOA agent can opt in without importing this module::
@@ -11,14 +11,23 @@ so any NOOA agent can opt in without importing this module::
 ``PoorRichardSkill`` is a plain tool belt (no ``Agent`` inheritance) wrapping
 the offline ``poor_richard`` API. It holds no shared resources, so there is
 nothing to tear down. Every tool is deterministic and network-free.
+
+``PoorRichardMemorySkill`` (opt-in via ``NOOA_MEMORY=1``) mounts nooa-memory's
+long-term memory as ``self.memory``: a shared SQLite store of how-to insights
+about the almanack's libraries, with local embeddings and per-turn hint
+injection.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+from typing import Literal
 
 import poor_richard
 from nooa import Skill
+from nooa_memory import EmbeddingConfig, MemoryConfig
+from nooa_memory.memory_skill import MemorySkill
 
 from poor_richard_agent.models import CardDetail, CardQuestion, SearchHit
 
@@ -79,3 +88,41 @@ class PoorRichardSkill(Skill):
             example=card.example,
             offline=card.offline,
         )
+
+
+def _memory_config_from_env() -> MemoryConfig:
+    """Build the memory config from the environment (registry-safe defaults).
+
+    The llama-server router already required for the LLM serves the embedding
+    model, so the litellm backend points at ``NOOA_LLM_BASE`` by default.
+    Tests set ``NOOA_EMBED_BACKEND=hashing`` to stay socket-blocked.
+    """
+    backend: Literal["hashing", "litellm"] = (
+        "hashing" if os.environ.get("NOOA_EMBED_BACKEND") == "hashing" else "litellm"
+    )
+    return MemoryConfig(
+        enabled=True,
+        path=os.environ.get("NOOA_MEMORY_PATH", ".nooa/memory/memory.sqlite"),
+        owner="",
+        embedding=EmbeddingConfig(
+            backend=backend,
+            model=os.environ.get("NOOA_EMBED_MODEL", "openai/nomic-embed-text-v1.5"),
+            endpoint=os.environ.get("NOOA_LLM_BASE", "http://127.0.0.1:8080/v1"),
+            api_key="local",
+        ),
+    )
+
+
+class PoorRichardMemorySkill(MemorySkill):
+    """Shared almanack library-usage memory (opt-in via ``NOOA_MEMORY=1``).
+
+    Persists how-to insights about the almanack's libraries — import names,
+    call shapes, keyword-only pitfalls, "X is not Y" corrections — in a shared
+    SQLite store (unowned namespace), so every agent surface learns from every
+    run. Usage knowledge only: never computed answer values. Config comes from
+    the environment (zero-arg, as the skill registry requires); pass an
+    explicit ``config`` in tests.
+    """
+
+    def __init__(self, config: MemoryConfig | None = None) -> None:
+        super().__init__(config or _memory_config_from_env())

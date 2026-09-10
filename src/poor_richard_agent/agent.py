@@ -5,6 +5,10 @@ The agent is a single ``nooa.Agent`` subclass: its docstring is the system
 prompt, ``today`` is a model-visible state field, and ``research`` is the one
 agentic (CodeAct) method, which returns a validated
 :class:`poor_richard_agent.models.ResearchReport`.
+
+Shared library-usage memory is opt-in (``NOOA_MEMORY=1``): it activates the
+``poor-richard.memory`` skill, exposing ``self.memory`` (nooa-memory tools +
+per-turn hint injection) without changing the default, self-contained run.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from nooa.strategies import CodeActStrategy
 from nooa.unifiedllm.registry import get_llm_client
 
 from poor_richard_agent.models import ResearchReport
-from poor_richard_agent.skills import PoorRichardSkill
+from poor_richard_agent.skills import PoorRichardMemorySkill, PoorRichardSkill
 
 # --- local LLM (llama-server router, OpenAI-compatible) ---------------------
 # Construction is offline-safe: no connection is made until a turn runs, so
@@ -49,7 +53,7 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
     what is available — a library that is not a top search hit may still be the
     right one, so never assume a capability is unavailable from search alone.
     {self.library_catalog()}
-
+    {self.memory_block()}
     Workflow for research(topic):
     1. If the topic uses relative dates ("next NYSE session", "today"), resolve
        them against self.today first.
@@ -82,6 +86,13 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
         self.skills = SkillRegistry(self)
         self.almanack: PoorRichardSkill
         self.skills.activate(["poor-richard.almanack"])
+        # Opt in to shared library-usage memory (NOOA_MEMORY=1): the
+        # "poor-richard.memory" entry point maps to PoorRichardMemorySkill and
+        # is exposed as self.memory. Off by default — the core run model stays
+        # self-contained per run.
+        if os.environ.get("NOOA_MEMORY"):
+            self.memory: PoorRichardMemorySkill
+            self.skills.activate(["poor-richard.memory"])
 
     def library_catalog(self) -> str:
         """Render the full almanack catalog: every installed library as one line
@@ -100,6 +111,28 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
                 head = f"{card.id} (import {card.import_name})"
             lines.append(f"{head} [{archetypes}]: {card.provenance}")
         return "\n".join(lines)
+
+    def memory_block(self) -> str:
+        """Render the shared-memory discipline paragraph for the system prompt.
+
+        Empty while memory is inactive, so the default agent's prompt stays
+        byte-identical to the no-memory core. Injected via the
+        ``{self.memory_block()}`` placeholder (mirrors
+        ``{self.library_catalog()}``).
+        """
+        if not hasattr(self, "memory"):
+            return ""
+        return (
+            "\nShared library-usage memory is active. self.memory holds how-to "
+            "insights past runs learned about these libraries (import names, "
+            'call shapes, keyword-only pitfalls, "X is not Y" corrections), '
+            "tagged by card_id. Before struggling with an unfamiliar library, "
+            "try self.memory.recall(topic); after learning a usage fact the "
+            'hard way, store it with self.memory.remember(content, type="skill", '
+            'tags=["<card_id>"]). Store only usage knowledge — never computed '
+            "answer values. Recalled memories are hints, not ground truth: the "
+            "card's notes/example and verified golden answers still win.\n"
+        )
 
     # --- Agentic method: ellipsis body, run by the LLM (CodeAct loop) ---
 

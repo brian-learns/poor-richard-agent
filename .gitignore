@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# nooa-memory shared store (NOAA_MEMORY_PATH default location)
+.nooa/
