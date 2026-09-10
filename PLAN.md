@@ -1,7 +1,7 @@
 # Plan: `poor-richard-agent` — NOOA agent for the Poor Richard almanack, with shared library-usage memory
 
-**Status:** Core complete (Phases 0–5); memory capability proposed (Phases 6–9)
-**Date:** 2026-09-09
+**Status:** Core complete (Phases 0–5); memory Phases 6–8 complete (skill, live smoke, offline tests); Phase 9 (learning loop) optional, not started
+**Date:** 2026-09-09 (updated 2026-09-09 after Phase 8)
 **Companion references:** `./README.md`, `./2607.20709.md` (NOOA paper), `../poor-richard/` (almanack), installed `nooa` 0.0.10 + `nooa-memory` 0.0.10.
 
 ---
@@ -129,23 +129,92 @@ Also add `litellm` to dependencies (nooa-memory lazy-imports it but does not dec
 
 ## 6. Phased implementation
 
-### Phase 6 — Configured memory skill
+### Phase 6 — Configured memory skill (complete)
 - `PoorRichardMemorySkill` (`skills.py`) + `poor-richard.memory` entry point + `litellm` dependency.
 - Env-gated activation in `PoorRichardAgent.__init__`; `{self.memory_block()}` docstring placeholder.
 - Verify: off-by-default construction is unchanged (existing suite green); on-construction renders `self.memory.*` tools and the guide block.
 
-### Phase 7 — Shared store & embedding wiring
+### Phase 7 — Shared store & embedding wiring (complete)
 - Default shared path (env-overridable `NOOA_MEMORY_PATH`) and `owner=""`.
 - Live smoke: write/recall round-trip through the manager with the local nomic embedder; confirm dense+hybrid recall and spontaneous injection in a real `research()` run against the router.
 
-### Phase 8 — Offline tests & quality gate
+### Phase 8 — Offline tests & quality gate (complete)
 - Memory-on tests under `no_network` with the **hashing** embedder: activation, tool rendering, remember→recall round-trip, shared-namespace visibility, skill-type decay protection, retrieval fault tolerance (dead embedder → loop survives, injection just missing).
 - Config-wiring test asserting the litellm `EmbeddingConfig` values without any network call.
 - Full tooling gate (`make check`), docstring coverage ≥90%.
 
 ### Phase 9 — Learning loop (optional)
-- LLM-backed reflection: `llm_reasoner`/`llm_reconciler` wired to `nooa_llm` (local), so repeated `Error` episodes distill into durable `skill` insights and stale hints get reconciled.
-- Seed the store from observed trace mistakes (manual `remember` or a script) and run the cold-vs-warm A/B from `../poor-richard/docs/test_plan.md` to measure the recurring-mistake reduction.
+
+Goal: the store improves itself — repeated `Error` episodes distill into durable
+insights, stale hints get merged/corrected — and the benefit is measured.
+
+#### 9.1 LLM-backed reflection
+
+- **Switch:** `NOOA_MEMORY_LLM_REFLECT=1` (default off — Phases 6–8 reflection
+  is deterministic-only: dedup/link/prune, zero LLM cost).
+- **Wiring:** override `attach()` in `PoorRichardMemorySkill` to build the
+  generative callables *after* the agent exists, then let `MemorySkill.attach`
+  pass them to `MemoryManager.install` (it already accepts
+  `reasoner=`/`reconciler=`):
+  ```python
+  def attach(self, agent) -> None:
+      if os.environ.get("NOOA_MEMORY_LLM_REFLECT"):
+          get_llm = lambda: agent.llm  # public accessor; resolved per call
+          self._reasoner = llm_reasoner(get_llm)
+          self._reconciler = llm_reconciler(get_llm)
+      super().attach(agent)
+  ```
+  The `get_llm` getter (not a client) is the nooa-memory contract — a host
+  model switch applies to the next reflection automatically.
+- **What each does** (verified in `nooa_memory/generative.py`):
+  - `llm_reasoner` — given the run's `episode` memories, returns up to 5
+    `reflection`-type insights (importance 6.0, above the default band); the
+    engine links them `DERIVED_FROM` the episodes.
+  - `llm_reconciler` — given a cluster of related memories (cos ≥
+    `recon_threshold` 0.6, ≤ 6), decides redundancy; if redundant, returns one
+    consolidated record (inherits dominant type, max importance, union of tags)
+    + the superseded ids to archive.
+  - Episode text stays **template-based** in nooa-memory 0.0.10
+    (`"Episode: {method}\nResult: …"` in `MemoryManager._write_episode`);
+    `llm_episode_writer` exists but is TUI-idle-runner-only and is *not* wired
+    into `MemoryManager`. Template episodes are adequate reasoner input.
+- **Cost/containment:** reflection runs post-task, top-level calls only
+  (`only_top_level=True`), inline by default (`background=False`); the
+  reconciler is capped at `max_clusters_per_reflection=10` per run (leftover
+  clusters wait for the next idle window); malformed LLM output is per-cluster
+  contained ("skip this item", never a corrupted store).
+- **Tests:** with `no_network`, assert the switch-off path is unchanged and
+  the switch-on path builds the callables (inject a fake `get_llm` returning a
+  `FakeLLMClient`-style stub; no real LLM).
+
+#### 9.2 Seed the store from observed trace mistakes
+
+- Transcribe the recurring mistakes seen in live traces (wrong import names,
+  invented attributes, positional-vs-keyword args) into `type="skill"`
+  memories tagged with the `card_id`.
+- **Importance ladder (Phase 7 finding):** model/tool `remember` defaults to
+  the verbal `MEDIUM` (≈2.7 on the 1–10 scale); pass `importance="HIGH"` for
+  verified gotchas so they outrank noise in ACT-R scoring.
+- Do this manually first (a handful of `remember` calls, e.g. the
+  pycountry/iso639 hints from the Phase 7 smoke); a `scripts/seed_memory.py`
+  only if the list grows.
+
+#### 9.3 Cold-vs-warm A/B (the measurable gate)
+
+- **Question set:** a fixed list of golden-question topics (drawn from
+  `../poor-richard/docs/test_plan.md` T1–T8 / the almanack's golden questions),
+  chosen to include at least one per seeded gotcha.
+- **Arms:** *cold* — empty store (fresh `NOOA_MEMORY_PATH`); *warm* — the
+  seeded store. Same model for both arms (e.g. `Qwen3.8-27B`), same env,
+  multiple runs per question to average out loop variance.
+- **Metrics:** the test plan's scoring grid (Correct / Conventional /
+  Discovered / Offline) **plus** per-run counts of API/import mistakes
+  (wrong-attribute and wrong-import cell executions) and total turns/cells to
+  the validated `ResearchReport`.
+- **Pass bar (proposed):** warm arm shows fewer API/import mistakes and no
+  regression on Correct; record the delta in the phase summary. If the delta
+  is null, the A/B result is itself the deliverable (and argues for tuning
+  hint importance/wording before investing further).
 
 ---
 
