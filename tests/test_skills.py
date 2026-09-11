@@ -1,8 +1,8 @@
 """Offline tests for PoorRichardSkill: deterministic search/get over the almanack.
 
 All tests run with the network blocked (tests/conftest.py). Most use the real
-bundled almanack data (high-value integration); one monkeypatches the wrapped
-``poor_richard.search`` to assert the exact SearchHit mapping in isolation.
+bundled almanack data (high-value integration); the rest monkeypatch the
+wrapped ``poor_richard.search`` to assert the SearchHit mapping in isolation.
 """
 
 import asyncio
@@ -42,9 +42,11 @@ def test_search_respects_top():
     assert [h.card_id for h in hits] == ["pycountry"]
 
 
-def test_search_no_match_returns_empty():
-    hits = asyncio.run(PoorRichardSkill().search("zzz qqq xyzzy flurble", top=3))
-    assert hits == []
+def test_search_no_match_returns_empty(monkeypatch):
+    # empty pass-through is this layer's contract; whether a given query
+    # matches is poor-richard's business (tested in its own suite)
+    monkeypatch.setattr(poor_richard, "search", lambda query, top=3: [])
+    assert asyncio.run(PoorRichardSkill().search("zzz qqq xyzzy flurble", top=3)) == []
 
 
 def test_search_flattens_matched_question(monkeypatch):
