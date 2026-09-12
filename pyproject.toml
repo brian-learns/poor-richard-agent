@@ -18,14 +18,6 @@ dependencies = [
 [project.scripts]
 poor-richard-agent = "poor_richard_agent:main"
 
-[project.entry-points."nooa.skills"]
-# NOOA skill registry name -> import target. Agents opt in with
-# SkillRegistry(self).activate(["poor-richard.almanack"]) to get self.almanack.
-# The memory skill is activated only when NOOA_MEMORY=1 (see agent.py) and
-# gives self.memory — shared library-usage insights (nooa-memory).
-"poor-richard.almanack" = "poor_richard_agent.skills:PoorRichardSkill"
-"poor-richard.memory" = "poor_richard_agent.skills:PoorRichardMemorySkill"
-
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
@@ -33,6 +25,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "bandit>=1.9.4",
+    "bpython>=0.26",
     "interrogate>=1.7.0",
     "pytest>=9.1.1",
     "refurb>=2.3.1",
