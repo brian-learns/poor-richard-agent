@@ -29,18 +29,50 @@ from nooa import Skill
 from nooa_memory import EmbeddingConfig, MemoryConfig
 from nooa_memory.memory_skill import MemorySkill
 
-from poor_richard_agent.models import CardDetail, CardQuestion, SearchHit
+from poor_richard_agent.models import BrowseCard, CardDetail, CardQuestion, SearchHit
 
 
 class PoorRichardSkill(Skill):
-    """Offline Poor Richard almanack tools. Discover the right library for a
-    factual question with ``search(query)`` (up to *top* ranked hits, each
-    carrying the card's best-matched golden question and its verified answer);
-    fetch the full authoritative card with ``get(card_id)`` to read every
-    golden question, the pinned example, and the notes that guard against API
-    drift."""
+    """Offline Poor Richard almanack tools. The flow is two stages: classify
+    with ``browse(archetype)`` (one ``BrowseCard`` per card — the *shape* of
+    its golden questions, never the answers) to map a topic to the right
+    library, then retrieve with ``get(card_id)`` to read every golden question
+    and verified answer, the pinned example, and the notes that guard against
+    API drift. ``search(query)`` is the keyword fallback (up to *top* ranked
+    hits, each carrying the card's best-matched golden question and its
+    verified answer) for topics that map to no clear class."""
 
     # --- Deterministic tools: ordinary Python, callable by the model ---
+
+    async def browse(self, archetype: str | None = None) -> list[BrowseCard]:
+        """Stage 1 — classify: survey the catalog before retrieving.
+
+        One ``BrowseCard`` per card — all cards when *archetype* is None, only
+        the cards of that question class otherwise — each carrying the *shape*
+        of its golden questions (question text only, never the answers). Read
+        the shapes to pick the card whose questions fit the topic, then move
+        to stage 2 with ``get(card_id)``. Prefer one archetype (the valid
+        values are the bracketed tags in the system-prompt catalog): the full
+        catalog is large.
+        """
+        arch = None
+        if archetype is not None:
+            try:
+                arch = poor_richard.Archetype(archetype)
+            except ValueError as exc:
+                valid = ", ".join(a.value for a in poor_richard.Archetype)
+                raise ValueError(f"unknown archetype: {archetype!r} (choose from: {valid})") from exc
+        cards = await asyncio.to_thread(poor_richard.browse, arch)
+        return [
+            BrowseCard(
+                card_id=c.id,
+                pypi=c.pypi,
+                import_name=c.import_name,
+                archetypes=[a.value for a in c.archetypes],
+                questions=[q.question for q in c.questions],
+            )
+            for c in cards
+        ]
 
     async def search(self, query: str, top: int = 3) -> list[SearchHit]:
         """Rank the almanack's offline libraries against *query*.

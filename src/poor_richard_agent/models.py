@@ -35,6 +35,19 @@ class SearchHit(BaseModel):
     )
 
 
+class BrowseCard(BaseModel):
+    """One card from a stage-1 catalog survey: the library identity plus the
+    *shape* of its golden questions — the question text only, never the
+    answers. This is what ``PoorRichardSkill.browse()`` returns; the answers
+    are the retrieve stage (``get(card_id)``)."""
+
+    card_id: str = Field(description="Stable card slug; the key for PoorRichardSkill.get().")
+    pypi: str = Field(description="PyPI distribution name of the underlying library.")
+    import_name: str = Field(description="Top-level Python module to import.")
+    archetypes: list[str] = Field(description="Question classes this card answers (e.g. 'lookup').")
+    questions: list[str] = Field(description="The shape of each golden question (text only, no answers).")
+
+
 class CardQuestion(BaseModel):
     """One golden question from a card: the question and its verified answer."""
 

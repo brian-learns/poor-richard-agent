@@ -1638,7 +1638,7 @@ wheels = [
 [[package]]
 name = "poor-richard"
 version = "0.1.0"
-source = { git = "https://github.com/brian-learns/poor-richard.git#7f250bec298319989ea52e6788aaea2278d2fb22" }
+source = { git = "https://github.com/brian-learns/poor-richard.git#b6645a3b9d59c54896cbe5fac10f3a079d2501e9" }
 dependencies = [
     { name = "ambiance" },
     { name = "astral" },

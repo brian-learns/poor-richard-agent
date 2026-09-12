@@ -57,20 +57,24 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
     Workflow for research(topic):
     1. If the topic uses relative dates ("next NYSE session", "today"), resolve
        them against self.today first.
-    2. Discover: pick the library(ies) in the catalog whose provenance fits the
-       topic. await self.almanack.search(topic) (up to 3 SearchHit) is a ranking
-       helper only — it is not the full set.
-    3. Verify or compute: for the chosen card, await self.almanack.get(card_id)
-       returns a CardDetail (fields: card_id, name, pypi, import_name, questions
+    2. Classify: map the topic to a question class (one of the bracketed
+       archetypes in the catalog above), then await self.almanack.browse(archetype)
+       to survey the cards of that class — you get the *shape* of each card's
+       golden questions, never the answers. Pick the card whose question shapes
+       fit the topic. If the topic maps to no clear class, fall back to
+       await self.almanack.search(topic) (up to 3 SearchHit, key terms) — a
+       ranking helper, not the full set.
+    3. Retrieve: for the chosen card, await self.almanack.get(card_id) returns a
+       CardDetail (fields: card_id, name, pypi, import_name, questions
        [each question/expected/status], notes, example, offline). If a golden
        question matches the topic, use its verified expected. Otherwise read
        notes and example for the pinned API shape, `import <import_name>` in a
        cell, and compute the answer. pprint(card) before guessing any field.
-    4. Return a ResearchReport: discovered (the search hits), answers (Answer
-       objects: the question asked, the verified-or-computed expected, notes),
-       offline=True, and a note giving the import + API shape used. If no
-       library can answer, return empty answers and explain in note. Never
-       invent an answer."""
+    4. Return a ResearchReport: discovered (the search hits, if you searched),
+       answers (Answer objects: the question asked, the verified-or-computed
+       expected, notes), offline=True, and a note giving the import + API
+       shape used. If no library can answer, return empty answers and explain
+       in note. Never invent an answer."""
 
     today: str
 
@@ -149,16 +153,19 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
     @strategy(CodeActStrategy())
     async def research(self, topic: str) -> ResearchReport:  # ty: ignore[empty-body]
         """Answer {topic} from the Poor Richard almanack, fully offline. Your
-        system prompt lists the full catalog of installed libraries — pick the
-        one(s) whose provenance fits the topic (await self.almanack.search(topic)
-        is only a ranking helper; never assume a library is unavailable because
-        it is not a top hit). Fetch the card with await self.almanack.get(card_id)
-        (a CardDetail: card_id, import_name, pypi, questions, notes, example).
-        If a golden question matches the topic, use its verified expected;
-        otherwise read notes/example, `import <import_name>` in a cell, and
-        compute the answer. Resolve any relative date against self.today. Return
-        a ResearchReport: the search hits, the answer(s) (question asked +
-        expected + notes), offline=True, and a note with the import + API shape
-        used. If no library can answer, return no answers and explain in note.
-        Never guess attribute names — pprint() an object you are unsure about."""
+        system prompt lists the full catalog of installed libraries — classify
+        the topic to a question class and survey it with
+        await self.almanack.browse(archetype) (the shape of each card's golden
+        questions, never the answers); await self.almanack.search(topic) is the
+        keyword fallback when no class fits (never assume a library is
+        unavailable because it is not a top hit). Fetch the card with
+        await self.almanack.get(card_id) (a CardDetail: card_id, import_name,
+        pypi, questions, notes, example). If a golden question matches the
+        topic, use its verified expected; otherwise read notes/example,
+        `import <import_name>` in a cell, and compute the answer. Resolve any
+        relative date against self.today. Return a ResearchReport: the search
+        hits (if you searched), the answer(s) (question asked + expected +
+        notes), offline=True, and a note with the import + API shape used. If
+        no library can answer, return no answers and explain in note. Never
+        guess attribute names — pprint() an object you are unsure about."""
         ...

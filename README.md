@@ -10,13 +10,16 @@ LLM loop is NOOA's, and every answer comes from the almanack's verified data.
 The agent is a single Python class (`src/poor_richard_agent/agent.py`); the
 model-facing surface:
 
-- `await self.almanack.search(query, top=3)` — deterministic; ranks the almanack's
-  libraries against the question (up to 3 `SearchHit`, each carrying the card's
+- `await self.almanack.browse(archetype=None)` — deterministic; stage 1 (classify).
+  One `BrowseCard` per card (all cards, or only the given question class), each
+  with the *shape* of its golden questions — question text only, never the answers.
+- `await self.almanack.search(query, top=3)` — deterministic; the keyword fallback
+  when a topic maps to no clear class (up to 3 `SearchHit`, each carrying the card's
   best-matched golden question and its verified answer). A ranking helper — not the
   full set of available libraries.
-- `await self.almanack.get(card_id)` — deterministic; returns a flat `CardDetail`
-  (all golden questions with verified answers, the pinned `example`, and the
-  `notes` that guard against API drift).
+- `await self.almanack.get(card_id)` — deterministic; stage 2 (retrieve). Returns a
+  flat `CardDetail` (all golden questions with verified answers, the pinned
+  `example`, and the `notes` that guard against API drift).
 - `research(topic)` — agentic (CodeAct, `...` body): the model picks the right
   library from the full catalog in its system prompt, fetches the card, and either
   reads the matching golden question's verified answer or calls the library to
@@ -25,12 +28,12 @@ model-facing surface:
 - `today` — state field (weekday, date, local time + UTC offset) visible to the model
   so it can resolve relative dates like "next NYSE session".
 
-The agent's system prompt embeds the **full catalog of all 43 libraries** (id,
-import name, archetypes, provenance) via `library_catalog()`, so the model can see
-every installed library — not just the top search hits — and pick by what each
+The agent's system prompt embeds the **full catalog of all installed libraries**
+(id, import name, archetypes, provenance) via `library_catalog()`, so the model can
+see every installed library — not just the top search hits — and pick by what each
 references.
 
-The two tools are plain Python in `PoorRichardSkill`
+The tools are plain Python in `PoorRichardSkill`
 (`src/poor_richard_agent/skills.py`), registered under the `nooa.skills`
 entry-point group so any NOOA agent can opt in via
 `SkillRegistry(self).activate(["poor-richard.almanack"])`.
@@ -80,10 +83,11 @@ uv run poor-richard-agent --batch tests/test_questions.txt
   something the model recalls. The card's `notes`/`example` pin the API shape at the
   installed version — the agent is told to prefer those over its own memory of the
   library.
-- **Discovery, not guessing**: the full 43-library catalog (id, import name,
-  archetypes, provenance) is in the system prompt, so the model sees every installed
-  library and picks by what each references; `search()` (token coverage + name
-  similarity) is a ranking helper, not the only path.
+- **Discovery, not guessing**: the full catalog (id, import name, archetypes,
+  provenance) is in the system prompt, so the model sees every installed
+  library and picks by what each references; `browse()` (question shapes, no
+  answers) is the classify stage and `search()` (token coverage + name
+  similarity) the fallback, not the only path.
 - The validated return is a flat pydantic `ResearchReport` (`models.py`); it never
   embeds the almanack's internal dataclasses.
 - Thinking is disabled for the NOOA loop via `chat_template_kwargs` (litellm
