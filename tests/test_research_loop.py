@@ -60,6 +60,33 @@ def test_research_loop_discovers_and_answers():
     assert report.answers[0].expected == poor_richard.get("pycountry").questions[0].expected
 
 
+def test_research_loop_two_stage_browse_then_get():
+    # the encouraged path: classify via browse (shapes, no answers), retrieve
+    # via get; no search, so discovered stays empty
+    llm = FakeLLMClient(
+        scripted_responses=[
+            _exec_python_resp("cards = await self.almanack.browse('lookup')"),
+            _exec_python_resp(
+                "from poor_richard_agent.models import Answer, ResearchReport\n"
+                "card = await self.almanack.get('pycountry')\n"
+                "q = card.questions[0]\n"
+                "report = ResearchReport(\n"
+                "    topic='ISO 3166 France',\n"
+                "    answers=[Answer(card_id=card.card_id, import_name=card.import_name, pypi=card.pypi,\n"
+                "               question=q.question, expected=q.expected, notes=card.notes)],\n"
+                "    offline=True,\n"
+                ")\n"
+                "return_result(report)"
+            ),
+        ]
+    )
+    agent = PoorRichardAgent(llm=llm)
+    report = asyncio.run(agent.research("ISO 3166 France"))
+    assert report.discovered == []
+    assert report.answers[0].card_id == "pycountry"
+    assert report.answers[0].expected == poor_richard.get("pycountry").questions[0].expected
+
+
 def test_research_loop_no_match_returns_empty_answers():
     llm = FakeLLMClient(
         scripted_responses=[

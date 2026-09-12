@@ -1,4 +1,4 @@
-"""Offline tests for PoorRichardSkill: deterministic search/get over the almanack.
+"""Offline tests for PoorRichardSkill: deterministic browse/search/get over the almanack.
 
 All tests run with the network blocked (tests/conftest.py). Most use the real
 bundled almanack data (high-value integration); the rest monkeypatch the
@@ -60,6 +60,29 @@ def test_search_flattens_matched_question(monkeypatch):
     assert hits[0].card_id == "pycountry"
     assert hits[0].question is None
     assert hits[0].expected is None
+
+
+def test_browse_all_cards_shapes_only():
+    cards = asyncio.run(PoorRichardSkill().browse())
+    assert [c.card_id for c in cards] == [c.id for c in poor_richard.CARDS]
+    for bc, raw in zip(cards, poor_richard.CARDS, strict=True):
+        assert bc.questions == [q.question for q in raw.questions]
+        assert bc.archetypes == [a.value for a in raw.archetypes]
+        assert bc.pypi == raw.pypi and bc.import_name == raw.import_name
+
+
+def test_browse_filters_by_archetype():
+    cards = asyncio.run(PoorRichardSkill().browse("lookup"))
+    assert cards and len(cards) < len(poor_richard.CARDS)
+    assert all("lookup" in c.archetypes for c in cards)
+    expected_ids = {c.id for c in poor_richard.CARDS if any(a.value == "lookup" for a in c.archetypes)}
+    assert {c.card_id for c in cards} == expected_ids
+    assert "pycountry" in {c.card_id for c in cards}
+
+
+def test_browse_unknown_archetype_lists_valid_values():
+    with pytest.raises(ValueError, match=r"unknown archetype: 'bogus' \(choose from: lookup, .+\)"):
+        asyncio.run(PoorRichardSkill().browse("bogus"))
 
 
 def test_get_returns_card_detail():
