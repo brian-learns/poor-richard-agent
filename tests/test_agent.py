@@ -17,31 +17,11 @@ from nooa.events import BeforeTurn
 
 from poor_richard_agent import Answer, PoorRichardAgent, _TurnTracker, main
 from poor_richard_agent.models import ResearchReport
-from poor_richard_agent.skills import PoorRichardSkill
 
 
 def test_agent_constructs_offline():
     agent = PoorRichardAgent()
     assert isinstance(agent, PoorRichardAgent)
-
-
-def test_almanack_skill_is_activated():
-    agent = PoorRichardAgent()
-    assert isinstance(agent.almanack, PoorRichardSkill)
-    assert "poor-richard.almanack" in agent.skills.activated()
-
-
-def test_library_catalog_lists_all_cards():
-    agent = PoorRichardAgent()
-    catalog = agent.library_catalog()
-    lines = catalog.splitlines()
-    # one line per card, each headed by its card_id (with "(import X)" when it differs)
-    assert len(lines) == len(poor_richard.CARDS)
-    ids = [line.split(" [")[0].split(" (import")[0] for line in lines]
-    assert sorted(ids) == sorted(c.id for c in poor_richard.CARDS)
-    # import name is shown only when it differs from the card_id
-    assert "pysweph (import swisseph)" in catalog
-    assert "pycountry (import" not in catalog
 
 
 def test_turn_tracker_counts_research_turns():
@@ -51,23 +31,6 @@ def test_turn_tracker_counts_research_turns():
     tracker(BeforeTurn(method_name="other", strategy="codeact", generation_id="g", turn_number=9))
     tracker(object())  # unrelated events are ignored
     assert tracker.turns == 2
-
-
-def test_library_catalog_rendered_once():
-    # The system-prompt placeholder invokes library_catalog() every turn; the
-    # catalog must be the string rendered once in __init__, not rebuilt.
-    agent = PoorRichardAgent()
-    assert agent.library_catalog() is agent._library_catalog
-    assert agent.library_catalog() is agent.library_catalog()
-
-
-def test_system_prompt_contains_full_catalog():
-    # the model must see every installed library, not just top search hits
-    agent = PoorRichardAgent()
-    prompt = agent._resolve_system_prompt()
-    assert "{self.library_catalog()}" not in prompt  # placeholder resolved
-    assert "skyfield [compute, temporal]: NASA JPL DE ephemerides" in prompt
-    assert "pysweph (import swisseph) [compute]" in prompt
 
 
 def test_today_state_field():
@@ -85,7 +48,6 @@ def test_instance_llm_injection():
     # a client can be injected per-instance, overriding the class-level nooa_llm
     agent = PoorRichardAgent(llm=FakeLLMClient())
     assert isinstance(agent, PoorRichardAgent)
-    assert isinstance(agent.almanack, PoorRichardSkill)
 
 
 def test_main_usage_exits_2_without_flags(monkeypatch, capsys):
@@ -110,13 +72,10 @@ def _stub_run(monkeypatch, answered: bool):
         answers = []
         if answered:
             answers = [
-                Answer(
-                    card_id="fake", import_name="fake", pypi="fake",
-                    question=topic, expected="42",
-                )
+                Answer(import_name="fake", question=topic, answer="42")
             ]
         # (report, turns, spans) — fixed 3/12 so the stderr lines are assertable
-        return ResearchReport(topic=topic, answers=answers, offline=True), 3, 12
+        return ResearchReport(topic=topic, answers=answers), 3, 12
 
     monkeypatch.setattr("poor_richard_agent._run", fake_run)
     monkeypatch.setattr("poor_richard_agent.enable_tracing", lambda: None)
@@ -193,7 +152,7 @@ def test_main_batch_mode_continues_after_error(monkeypatch, capsys, tmp_path):
         calls.append(topic)
         if "one" in topic:
             raise RuntimeError("LLM server down")
-        return ResearchReport(topic=topic, offline=True), 3, 12
+        return ResearchReport(topic=topic), 3, 12
 
     monkeypatch.setattr("poor_richard_agent._run", flaky_run)
     monkeypatch.setattr("poor_richard_agent.enable_tracing", lambda: None)

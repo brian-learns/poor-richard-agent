@@ -23,10 +23,7 @@ from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from poor_richard_agent.agent import PoorRichardAgent
 from poor_richard_agent.models import (
     Answer,
-    CardDetail,
-    CardQuestion,
     ResearchReport,
-    SearchHit,
 )
 
 __all__ = [
@@ -35,7 +32,6 @@ __all__ = [
     "CardQuestion",
     "PoorRichardAgent",
     "ResearchReport",
-    "SearchHit",
     "main",
 ]
 

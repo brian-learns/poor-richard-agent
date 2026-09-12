@@ -2,7 +2,8 @@
 
 Drives the CodeAct loop with a scripted ``FakeLLMClient`` (NOOA's
 capability-test pattern): the fake LLM emits ``execute_python`` tool calls that
-call the almanack skill and submit a ``ResearchReport`` via ``return_result``.
+call the ``poor_richard`` library directly and submit a ``ResearchReport`` via
+``return_result``.
 No network, no real LLM — this validates the loop wiring, the validated return,
 discovery, and the no-match path.
 """
@@ -32,18 +33,19 @@ def test_research_loop_discovers_and_answers():
     llm = FakeLLMClient(
         scripted_responses=[
             # turn 1: discover the right library
-            _exec_python_resp("hits = await self.almanack.search('ISO 3166 France', top=3)"),
+            _exec_python_resp(
+                "import poor_richard\n"
+                "hits = poor_richard.search('ISO 3166 France', top=3)"
+            ),
             # turn 2: verify against the card and submit the validated report
             _exec_python_resp(
                 "from poor_richard_agent.models import Answer, ResearchReport\n"
-                "card = await self.almanack.get('pycountry')\n"
+                "card = poor_richard.get('pycountry')\n"
                 "q = card.questions[0]\n"
                 "report = ResearchReport(\n"
                 "    topic='ISO 3166 France',\n"
-                "    discovered=list(hits),\n"
-                "    answers=[Answer(card_id=card.card_id, import_name=card.import_name, pypi=card.pypi,\n"
-                "               question=q.question, expected=q.expected, notes=card.notes)],\n"
-                "    offline=True,\n"
+                "    answers=[Answer(import_name=card.import_name, question=q.question,\n"
+                "               answer=q.expected, notes=card.notes)],\n"
                 ")\n"
                 "return_result(report)"
             ),
@@ -52,29 +54,29 @@ def test_research_loop_discovers_and_answers():
     agent = PoorRichardAgent(llm=llm)
     report = asyncio.run(agent.research("ISO 3166 France"))
     assert isinstance(report, ResearchReport)
-    assert report.offline is True
-    assert report.discovered[0].card_id == "pycountry"
-    assert report.answers[0].card_id == "pycountry"
+    assert report.answers[0].import_name == "pycountry"
     # Cross-check against live almanack data (the golden answer is data, not
-    # a constant): the report's expected must match the card's first question.
-    assert report.answers[0].expected == poor_richard.get("pycountry").questions[0].expected
+    # a constant): the report's answer must match the card's first question.
+    assert report.answers[0].answer == poor_richard.get("pycountry").questions[0].expected
 
 
 def test_research_loop_two_stage_browse_then_get():
     # the encouraged path: classify via browse (shapes, no answers), retrieve
-    # via get; no search, so discovered stays empty
+    # via get
     llm = FakeLLMClient(
         scripted_responses=[
-            _exec_python_resp("cards = await self.almanack.browse('lookup')"),
+            _exec_python_resp(
+                "import poor_richard\n"
+                "cards = poor_richard.browse(poor_richard.Archetype.LOOKUP)"
+            ),
             _exec_python_resp(
                 "from poor_richard_agent.models import Answer, ResearchReport\n"
-                "card = await self.almanack.get('pycountry')\n"
+                "card = poor_richard.get('pycountry')\n"
                 "q = card.questions[0]\n"
                 "report = ResearchReport(\n"
                 "    topic='ISO 3166 France',\n"
-                "    answers=[Answer(card_id=card.card_id, import_name=card.import_name, pypi=card.pypi,\n"
-                "               question=q.question, expected=q.expected, notes=card.notes)],\n"
-                "    offline=True,\n"
+                "    answers=[Answer(import_name=card.import_name, question=q.question,\n"
+                "               answer=q.expected, notes=card.notes)],\n"
                 ")\n"
                 "return_result(report)"
             ),
@@ -82,19 +84,19 @@ def test_research_loop_two_stage_browse_then_get():
     )
     agent = PoorRichardAgent(llm=llm)
     report = asyncio.run(agent.research("ISO 3166 France"))
-    assert report.discovered == []
-    assert report.answers[0].card_id == "pycountry"
-    assert report.answers[0].expected == poor_richard.get("pycountry").questions[0].expected
+    assert report.answers[0].import_name == "pycountry"
+    assert report.answers[0].answer == poor_richard.get("pycountry").questions[0].expected
 
 
 def test_research_loop_no_match_returns_empty_answers():
     llm = FakeLLMClient(
         scripted_responses=[
             _exec_python_resp(
+                "import poor_richard\n"
                 "from poor_richard_agent.models import ResearchReport\n"
-                "hits = await self.almanack.search('zzz qqq xyzzy flurble')\n"
-                "return_result(ResearchReport(topic='zzz qqq xyzzy flurble', discovered=list(hits),\n"
-                "    answers=[], offline=True, note='no card matched'))"
+                "hits = poor_richard.search('zzz qqq xyzzy flurble')\n"
+                "return_result(ResearchReport(topic='zzz qqq xyzzy flurble',\n"
+                "    answers=[], note='no card matched'))"
             )
         ]
     )
@@ -102,4 +104,4 @@ def test_research_loop_no_match_returns_empty_answers():
     report = asyncio.run(agent.research("zzz qqq xyzzy flurble"))
     assert isinstance(report, ResearchReport)
     assert report.answers == []
-    assert report.offline is True
+    assert report.note == "no card matched"
