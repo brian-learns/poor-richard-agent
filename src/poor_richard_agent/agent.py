@@ -80,6 +80,10 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
         # topic are resolved against this. Weekday first (relative-date
         # resolution needs it). astimezone() so %z formats the UTC offset.
         self.today = datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M %z")
+        # The system-prompt placeholder re-invokes library_catalog() on every
+        # turn; the catalog is a pure function of poor_richard.CARDS (static
+        # for the process lifetime), so render it once per agent instead.
+        self._library_catalog = self._render_library_catalog()
         # Opt in to the almanack skill: the entry point maps
         # "poor-richard.almanack" to PoorRichardSkill; activate() loads it and
         # exposes it to the model as self.almanack.
@@ -94,14 +98,11 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
             self.memory: PoorRichardMemorySkill
             self.skills.activate(["poor-richard.memory"])
 
-    def library_catalog(self) -> str:
-        """Render the full almanack catalog: every installed library as one line
+    def _render_library_catalog(self) -> str:
+        """Build the catalog text: every installed library as one line
         ``card_id (import <import_name>)? [archetypes]: provenance``.
 
-        Injected into the system prompt via the ``{self.library_catalog()}``
-        placeholder so the model sees the complete set of available libraries
-        (and what each references), not just the top ``search()`` hits. The
-        import name is shown only when it differs from ``card_id``.
+        The import name is shown only when it differs from ``card_id``.
         """
         lines = []
         for card in poor_richard.CARDS:
@@ -111,6 +112,15 @@ class PoorRichardAgent(Agent, llm=nooa_llm):
                 head = f"{card.id} (import {card.import_name})"
             lines.append(f"{head} [{archetypes}]: {card.provenance}")
         return "\n".join(lines)
+
+    def library_catalog(self) -> str:
+        """The full almanack catalog, rendered once in ``__init__``.
+
+        Injected into the system prompt via the ``{self.library_catalog()}``
+        placeholder so the model sees the complete set of available libraries
+        (and what each references), not just the top ``search()`` hits.
+        """
+        return self._library_catalog
 
     def memory_block(self) -> str:
         """Render the shared-memory discipline paragraph for the system prompt.

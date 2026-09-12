@@ -1,0 +1,10 @@
+What is the 10th NYSE trading day after 2025-12-22?
+Is IBAN DE13430609671234567891 valid?
+What is the molar mass of copper(II) sulfate pentahydrate (CuSO4·5H2O) in g/mol, using IUPAC atomic weights?
+What is the Rydberg constant in m⁻¹? Report the value you used and its precision.
+What is the geodesic distance over the WGS84 ellipsoid between Cape Town (33.9249°S, 18.4241°E) and Nairobi (1.2921°S, 36.8219°E)? State the method.
+What is the Sun's geocentric ecliptic longitude at 2025-06-15 12:00 UTC?
+What is the ASCII-compatible (IDNA/punycode) encoding of the domain  한국.kr?
+What is the registered top-level domain (public suffix) of 'app.example.org.cn'?
+What sector and industry is Deere & Company (DE) in?
+Parse the ISO 8601 duration P1Y2M3DT4H5M6S and add it to 2025-01-01 00:00 (calendar arithmetic: years to years, months to months, then the remainder). What date and time do you land on?

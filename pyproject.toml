@@ -59,6 +59,10 @@ ignore = [
 ]
 
 
+[tool.vulture]
+# SpanProcessor ABC interface params must keep the OTel names but are unused
+ignore_names = ["span", "timeout_millis"]
+
 [tool.bandit]
 skips = ["B101", "B404", "B602"]
 

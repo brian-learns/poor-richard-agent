@@ -8,9 +8,12 @@ The README covers architecture; this file covers what you need to work here.
 
 - uv project (Python 3.14). `make check` (ruff/bandit/vulture/refurb/ty/
   interrogate + lockfile + audit), `make test` (check + pytest), `make format`.
-- CLI: `uv run poor-richard-agent "<question>"` prints the validated
-  `ResearchReport` as JSON. Exit codes: 0 answers found, 1 no match / error,
-  2 usage.
+- CLI: `uv run poor-richard-agent --prompt "<question>"` prints the validated
+  `ResearchReport` as JSON; `--batch FILE` runs questions (one per non-empty
+  line) in series, progress on stderr, one report per question on stdout.
+  Per-question LLM turns (BeforeTurn events) and ended-span counts print on
+  stderr, with a total in the batch summary. Exit codes: 0 answers found,
+  1 no match / error, 2 usage.
 - **Offline-first**: the agent makes no network calls at runtime — a green
   test run means correct *and* offline. Don't add runtime network deps.
 - LLM: defaults to a local llama-server router (`http://127.0.0.1:8080/v1`,
@@ -23,7 +26,14 @@ The README covers architecture; this file covers what you need to work here.
 - Optional shared memory: `NOOA_MEMORY=1` activates the `poor-richard.memory`
   skill (`self.memory`); off by default and must stay off by default.
 - Traces: `export NOOA_VIEWER_AUTH_TOKEN=$(openssl rand -hex 16)` then
-  `uv run nooa start-dev -h 0.0.0.0` for the NOOA dev console.
+  `uv run nooa start-dev -h 0.0.0.0` for the NOOA dev console. The CLI prints
+  each run's session ID on stderr (`session <id>` / batch progress lines),
+  deep-linkable as `:5001/traces/view?session_id=<id>`. Each run gets a fresh
+  session; tag a batch with `TRACE_EXPERIMENT=<name>` to group it. The /eval
+  "Experiments" tab only shows *eval-pipeline* experiments (needs eval
+  metadata), so for batch A/B comparison use
+  `uv run python scripts/experiment_stats.py [-e NAME] [--json]` (queries the
+  running viewer API).
 
 ## Wiring a custom LLM (what poor-richard-space does)
 

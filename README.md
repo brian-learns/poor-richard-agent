@@ -57,11 +57,18 @@ uv run nooa start-dev -h 0.0.0.0
 Then run the agent:
 
 ```
-uv run poor-richard-agent "What is the ISO 3166-1 alpha-3 code for France?"
+uv run poor-richard-agent --prompt "What is the ISO 3166-1 alpha-3 code for France?"
 ```
 
 It prints the validated `ResearchReport` as JSON. Exit codes: 0 ok (answers
 found), 1 no match / research error, 2 usage error.
+
+Batch mode: `--batch FILE` runs the agent in series over a file of questions
+(one per non-empty line), printing one report per question:
+
+```
+uv run poor-richard-agent --batch tests/test_questions.txt
+```
 
 ## Notes
 
