@@ -6,7 +6,7 @@ The README covers architecture; this file covers what you need to work here.
 
 ## Run & test
 
-- uv project (Python 3.14). `make check` (ruff/bandit/vulture/refurb/ty/
+- uv project (Python 3.12–3.13). `make check` (ruff/bandit/vulture/refurb/ty/
   interrogate + lockfile + audit), `make test` (check + pytest), `make format`.
 - CLI: `uv run poor-richard-agent --prompt "<question>"` prints the validated
   `ResearchReport` as JSON; `--batch FILE` runs questions (one per non-empty
@@ -16,15 +16,13 @@ The README covers architecture; this file covers what you need to work here.
   1 no match / error, 2 usage.
 - **Offline-first**: the agent makes no network calls at runtime — a green
   test run means correct *and* offline. Don't add runtime network deps.
-- LLM: defaults to a local llama-server router (`http://127.0.0.1:8080/v1`,
-  model `Qwen3.6-35B-A3B-MXFP4_MOE`); override with `NOOA_MODEL` /
-  `NOOA_LLM_BASE`. Building the client is offline-safe (no connection until
+- LLM: defaults to a local llama-server router (`http://127.0.0.1:8080/v1`);
+  the model comes from `NOOA_MODEL` (no hard-coded default) and the base URL
+  from `NOOA_LLM_BASE`. Building the client is offline-safe (no connection until
   a turn runs), so importing `poor_richard_agent.agent` is safe in tests.
 - `poor-richard` comes from git (see `[tool.uv.sources]`); the `financedatabase`
   card needs a one-time data fetch (`scripts/fetch_financedatabase.py` in that
   repo) — its test skips if the data is absent.
-- Optional shared memory: `NOOA_MEMORY=1` activates the `poor-richard.memory`
-  skill (`self.memory`); off by default and must stay off by default.
 - Traces: `export NOOA_VIEWER_AUTH_TOKEN=$(openssl rand -hex 16)` then
   `uv run nooa start-dev -h 0.0.0.0` for the NOOA dev console. The CLI prints
   each run's session ID on stderr (`session <id>` / batch progress lines),
@@ -62,6 +60,4 @@ The README covers architecture; this file covers what you need to work here.
 
 - The validated return contract is the flat pydantic models in `models.py`;
   never embed the almanack's internal dataclasses in them.
-- Skills register under the `nooa.skills` entry-point group (see pyproject);
-  the agent opts in via `SkillRegistry(self).activate([...])`.
 - Commit messages: imperative subject + short body explaining why.
