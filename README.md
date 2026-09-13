@@ -32,3 +32,8 @@ Batch mode: `--batch FILE` runs the agent in series over a file of questions
 uv run poor-richard-agent --batch tests/test_questions.txt
 ```
 
+get all extras
+```
+uv sync --all-extras
+```
+
