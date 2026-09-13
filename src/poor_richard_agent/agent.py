@@ -20,7 +20,7 @@ from nooa.unifiedllm.registry import get_llm_client
 
 from poor_richard_agent.models import ResearchReport
 
-LLM_MODEL = os.environ.get("NOOA_MODEL", "Qwen3.6-35B-A3B-MXFP4_MOE")
+LLM_MODEL = os.environ.get("NOOA_MODEL", "")
 LLM_BASE = os.environ.get("NOOA_LLM_BASE", "http://127.0.0.1:8080/v1")
 
 nooa_llm = get_llm_client(
